@@ -301,8 +301,15 @@ def start_qpm(argv):
             raise SystemExit(str(exc)) from exc
     env["QFW_SITE_CONFIG"] = str(site_config_path)
     if qfw_config.defw_version(env) == 2:
+        # v1 listened on every interface and only advertised service_host,
+        # whose fallback of 127.0.0.1 never mattered. A v2 process listens
+        # where it is told, and one bound to loopback cannot reach the
+        # directory on another node, so with no host named it binds this
+        # node's own name.
+        bind_host = str(service.get("bind-host") or service.get("host") or
+                        target or socket.gethostname())
         env["DEFW2_ADDRESS"] = _defw2_listen_address(
-            env, service_host, service_port)
+            env, bind_host, service_port)
     return _start_defw_owned_process(
         service_id,
         env,
