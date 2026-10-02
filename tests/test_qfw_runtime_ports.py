@@ -494,6 +494,7 @@ def test_private_process_launcher_refuses_a_port_already_in_use(
             process_launcher._start_defw_owned_process(
                 "mpi-smoke",
                 {"DEFW_LOG_DIR": str(tmp_path / "logs"), variable: str(port)},
+                ("qpm", "svc_mpi_smoke"),
                 pid_file,
                 tmp_path / "svc-ready.json",
                 5,
@@ -565,6 +566,7 @@ def test_private_process_launcher_uses_defw_python_wrapper(
     rc = process_launcher._start_defw_owned_process(
         "svc",
         {"DEFW_LOG_DIR": str(log_dir), "VIRTUAL_ENV": "/shared/venv"},
+        ("qpm", "svc_test"),
         pid_file,
         ready_file,
         5,
@@ -583,6 +585,204 @@ def test_private_process_launcher_uses_defw_python_wrapper(
     assert pid_file.read_text(encoding="utf-8") == "1234\n"
     assert json.loads(ready_file.read_text(encoding="utf-8"))["role"] == (
         "service")
+
+
+def _fake_process_start(monkeypatch, expected_command):
+    """Capture what _start_defw_owned_process would run."""
+    captured = {}
+
+    class FakeProcess:
+        pid = 4321
+
+        def poll(self):
+            return None
+
+        def wait(self):
+            return 0
+
+    def fake_command_path(name, env=None):
+        assert name == expected_command
+        return Path("/opt/qfw/bin") / name
+
+    def fake_popen(argv, env, start_new_session, stdout, stderr):
+        captured["argv"] = list(argv)
+        captured["env"] = dict(env)
+        return FakeProcess()
+
+    monkeypatch.setattr(process_launcher, "_command_path", fake_command_path)
+    monkeypatch.setattr(process_launcher.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        process_launcher,
+        "_wait_process_ready",
+        lambda process, timeout, name, ready_probe: None,
+    )
+    return captured
+
+
+@pytest.mark.parametrize(
+    "role, command, argv",
+    [
+        (("qpm", "svc_fake_iqm_qpm"), "defw2-python",
+         ["/opt/qfw/bin/defw2-python", "--serve", "svc_fake_iqm_qpm"]),
+        (("directory", None), "defw2-dirsvc",
+         ["/opt/qfw/bin/defw2-dirsvc"]),
+    ],
+)
+def test_private_process_launcher_starts_v2_processes(
+        tmp_path, monkeypatch, role, command, argv):
+    captured = _fake_process_start(monkeypatch, command)
+
+    rc = process_launcher._start_defw_owned_process(
+        "svc",
+        {"DEFW_LOG_DIR": str(tmp_path / "logs"), "QFW_DEFW_VERSION": "2"},
+        role,
+        tmp_path / "svc.pid",
+        tmp_path / "svc-ready.json",
+        5,
+        True,
+        False,
+        {"role": role[0]},
+        lambda: True,
+    )
+
+    assert rc == 0
+    assert captured["argv"] == argv
+
+
+def test_private_process_launcher_v2_ignores_the_telnet_port(
+        tmp_path, monkeypatch):
+    # v2 has no telnet shell, so a leftover holding that port is no reason
+    # to refuse a v2 service.
+    captured = _fake_process_start(monkeypatch, "defw2-python")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as leftover:
+        leftover.bind(("", 0))
+        leftover.listen(1)
+        port = leftover.getsockname()[1]
+
+        rc = process_launcher._start_defw_owned_process(
+            "svc",
+            {"DEFW_LOG_DIR": str(tmp_path / "logs"),
+             "DEFW_TELNET_PORT": str(port), "QFW_DEFW_VERSION": "2"},
+            ("qpm", "svc_fake_iqm_qpm"),
+            tmp_path / "svc.pid",
+            tmp_path / "svc-ready.json",
+            5,
+            True,
+            False,
+            {"role": "service"},
+            lambda: True,
+        )
+
+    assert rc == 0
+    assert captured["argv"][1:] == ["--serve", "svc_fake_iqm_qpm"]
+
+
+@pytest.mark.parametrize("caller_address", [None, "na+sm://"])
+def test_private_directory_launcher_binds_v2_to_its_endpoint(
+        tmp_path, monkeypatch, caller_address):
+    # Every QFw process finds the directory from the host and port it was
+    # given, so a v2 directory listens there, unless the caller chose an
+    # address of its own.
+    captured = {}
+
+    def fake_start(name, env, role, *args):
+        captured["env"] = dict(env)
+        captured["role"] = role
+        return 0
+
+    monkeypatch.setenv("QFW_DEFW_VERSION", "2")
+    if caller_address:
+        monkeypatch.setenv("DEFW2_ADDRESS", caller_address)
+    else:
+        monkeypatch.delenv("DEFW2_ADDRESS", raising=False)
+    monkeypatch.setattr(
+        process_launcher, "_start_defw_owned_process", fake_start)
+
+    rc = process_launcher.start_directory([
+        "--name", "qfw-local-dirsvc",
+        "--host", "127.0.0.1",
+        "--listen-port", "18090",
+        "--run-dir", str(tmp_path / "run"),
+    ])
+
+    assert rc == 0
+    assert captured["role"] == ("directory", None)
+    assert captured["env"]["DEFW2_ADDRESS"] == (
+        caller_address or "ofi+tcp://127.0.0.1:18090")
+
+
+def test_private_qpm_launcher_serves_its_module_on_v2(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "site-services.yaml"
+    manifest_path.write_text(
+        "\n".join([
+            "services:",
+            "  - name: fake-iqm",
+            "    module: svc_fake_iqm_qpm",
+            "    load-modules: svc_fake_iqm_qpm,api_launcher",
+            "    credential-mode: no-secret",
+            "    host: 127.0.0.1",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    site_path = tmp_path / "site.yaml"
+    site_path.write_text(
+        "\n".join([
+            "directory-service:",
+            "  endpoint: 127.0.0.1:8090",
+            "service:",
+            f"  manifest: {manifest_path}",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def fake_start(name, env, role, *args):
+        captured["env"] = dict(env)
+        captured["role"] = role
+        return 0
+
+    monkeypatch.setenv("QFW_SERVICE_SCOPE", "site")
+    monkeypatch.setenv("QFW_DEFW_VERSION", "2")
+    monkeypatch.delenv("DEFW2_ADDRESS", raising=False)
+    monkeypatch.setattr(
+        process_launcher, "_start_defw_owned_process", fake_start)
+
+    rc = process_launcher.start_qpm([
+        "--service-id", "fake-iqm",
+        "--site-config", str(site_path),
+        "--run-dir", str(tmp_path / "run"),
+        "--listen-port", "18290",
+    ])
+
+    assert rc == 0
+    # v2 serves the QPM module alone; api_launcher was v1's to load.
+    assert captured["role"] == ("qpm", "svc_fake_iqm_qpm")
+    assert captured["env"]["DEFW2_ADDRESS"] == "ofi+tcp://127.0.0.1:18290"
+    # The directory comes from the same parent tuple as on v1.
+    assert captured["env"]["DEFW_PARENT_HOSTNAME"] == "127.0.0.1"
+    assert captured["env"]["DEFW_PARENT_PORT"] == "8090"
+
+
+def test_defw_version_is_one_or_two():
+    assert qfw_config.defw_version({}) == 1
+    assert qfw_config.defw_version({"QFW_DEFW_VERSION": " 2 "}) == 2
+    assert qfw_config.defw_python_command({}) == "defw-python"
+    assert qfw_config.defw_python_command(
+        {"QFW_DEFW_VERSION": "2"}) == "defw2-python"
+    with pytest.raises(ValueError):
+        qfw_config.defw_version({"QFW_DEFW_VERSION": "3"})
+
+
+def test_run_state_records_the_callers_defw_version(monkeypatch):
+    monkeypatch.setenv("QFW_DEFW_VERSION", "2")
+    environment = {}
+
+    qfw_config._persist_caller_environment(environment)
+
+    assert environment["QFW_DEFW_VERSION"] == "2"
 
 
 def test_process_launcher_expands_site_simulator_nodes(monkeypatch):
@@ -676,6 +876,41 @@ def test_qfw_srun_runs_directly_for_local_allocation(tmp_path, monkeypatch):
 
     assert rc == 0
     assert captured["argv"] == ["/usr/bin/defw-python", "app.py"]
+
+
+def test_qfw_srun_runs_applications_on_v2_when_the_run_does(
+        tmp_path, monkeypatch):
+    run_dir = tmp_path / "run"
+    state_dir = run_dir / "state"
+    state_dir.mkdir(parents=True)
+    state = {
+        "setup_complete": True,
+        "run_dir": str(run_dir),
+        "environment": {
+            "QFW_ALLOCATION_MODE": "local",
+            "QFW_DEFW_VERSION": "2",
+        },
+    }
+    (state_dir / "runtime-state.json").write_text(
+        json.dumps(state), encoding="utf-8")
+    captured = {}
+
+    def fake_command_path(name, env=None):
+        assert name == "defw2-python"
+        return Path("/usr/bin/defw2-python")
+
+    def fake_run(argv, env):
+        captured["argv"] = list(argv)
+        return commands.subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.delenv("QFW_DEFW_VERSION", raising=False)
+    monkeypatch.setattr(commands, "_command_path", fake_command_path)
+    monkeypatch.setattr(commands.subprocess, "run", fake_run)
+
+    rc = commands.qfw_srun(["--run-dir", str(run_dir), "app.py"])
+
+    assert rc == 0
+    assert captured["argv"] == ["/usr/bin/defw2-python", "app.py"]
 
 
 def test_qfw_srun_preserves_caller_module_paths(tmp_path, monkeypatch):

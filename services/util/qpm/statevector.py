@@ -1,10 +1,18 @@
 import base64
+import os
 import struct
 import time
 import zlib
 
 
+# How a statevector travels in a QPM's answer. DEFw v1 carries answers as
+# YAML text, so there a statevector is base64 of its zlib-compressed bytes.
+# DEFw v2 moves a statevector as bulk bytes, straight into a buffer its
+# caller lent, so there the payload carries the raw bytes and nothing
+# encodes or decodes them on either side.
 STATEVECTOR_ENCODING = "base64+zlib"
+STATEVECTOR_RAW_ENCODING = "raw"
+STATEVECTOR_ENCODINGS = (STATEVECTOR_ENCODING, STATEVECTOR_RAW_ENCODING)
 STATEVECTOR_DTYPE = "complex128"
 STATEVECTOR_BYTE_ORDER = "little"
 STATEVECTOR_BYTES_PER_AMPLITUDE = 16
@@ -73,6 +81,17 @@ def _resolve_num_qubits(num_amplitudes, num_qubits=None):
 	return resolved
 
 
+def default_statevector_encoding(env=None):
+	"""raw for a QPM running on DEFw v2, base64+zlib on v1.
+
+	The run's QFW_DEFW_VERSION says which DEFw this process serves on.
+	"""
+	version = str((env or os.environ).get("QFW_DEFW_VERSION", "")).strip()
+	if version == "2":
+		return STATEVECTOR_RAW_ENCODING
+	return STATEVECTOR_ENCODING
+
+
 def _compression_ratio(raw_size, compressed_size):
 	if raw_size <= 0:
 		return 0.0
@@ -80,17 +99,37 @@ def _compression_ratio(raw_size, compressed_size):
 
 
 def encode_statevector_payload(amplitudes, num_qubits=None, source=None,
-			       metadata=None):
+			       metadata=None, encoding=None):
 	raw, num_amplitudes = _statevector_bytes(amplitudes)
 	return _encode_statevector_bytes(
 		raw, num_amplitudes, num_qubits=num_qubits,
-		source=source, metadata=metadata)
+		source=source, metadata=metadata, encoding=encoding)
 
 
 def _encode_statevector_bytes(raw, num_amplitudes, num_qubits=None,
-			      source=None, metadata=None):
-	start = time.time()
+			      source=None, metadata=None, encoding=None):
+	encoding = encoding or default_statevector_encoding()
+	if encoding not in STATEVECTOR_ENCODINGS:
+		raise ValueError(f"Unsupported statevector encoding: {encoding}")
 	resolved_qubits = _resolve_num_qubits(num_amplitudes, num_qubits)
+	if encoding == STATEVECTOR_RAW_ENCODING:
+		payload = {
+			"type": "statevector",
+			"encoding": STATEVECTOR_RAW_ENCODING,
+			"dtype": STATEVECTOR_DTYPE,
+			"byte_order": STATEVECTOR_BYTE_ORDER,
+			"num_qubits": resolved_qubits,
+			"num_amplitudes": num_amplitudes,
+			"raw_size_bytes": len(raw),
+			"data": raw,
+		}
+		if source:
+			payload["source"] = source
+		if metadata:
+			payload["metadata"] = metadata
+		return payload
+
+	start = time.time()
 	compressed = zlib.compress(raw)
 	encoded = base64.b64encode(compressed).decode("ascii")
 	payload = {
@@ -121,7 +160,7 @@ def decode_statevector_payload(payload):
 		raise ValueError("Statevector payload must be a mapping")
 	if payload.get("type") != "statevector":
 		raise ValueError(f"Unsupported statevector payload: {payload}")
-	if payload.get("encoding") != STATEVECTOR_ENCODING:
+	if payload.get("encoding") not in STATEVECTOR_ENCODINGS:
 		raise ValueError(
 			f"Unsupported statevector encoding: {payload.get('encoding')}")
 	if payload.get("dtype") != STATEVECTOR_DTYPE:
@@ -131,6 +170,9 @@ def decode_statevector_payload(payload):
 		raise ValueError(
 			f"Unsupported statevector byte order: "
 			f"{payload.get('byte_order')}")
+
+	if payload.get("encoding") == STATEVECTOR_RAW_ENCODING:
+		return _decode_raw_payload(payload)
 
 	encoded = payload.get("data")
 	if not isinstance(encoded, str):
@@ -170,6 +212,33 @@ def decode_statevector_payload(payload):
 	return _statevector_from_bytes(raw)
 
 
+def _decode_raw_payload(payload):
+	"""The amplitudes of a raw payload: bytes, or any buffer such as the
+	numpy array a v2 caller lent for them."""
+	try:
+		raw = memoryview(payload.get("data")).cast("B")
+	except TypeError:
+		raise ValueError("Statevector data must be bytes for the raw "
+				 "encoding")
+	expected_raw_size = payload.get("raw_size_bytes")
+	if expected_raw_size is not None and int(expected_raw_size) != len(raw):
+		raise ValueError(
+			f"Statevector raw size mismatch: expected "
+			f"{expected_raw_size}, got {len(raw)}")
+	if len(raw) % STATEVECTOR_BYTES_PER_AMPLITUDE:
+		raise ValueError(
+			"Statevector byte length is not aligned to complex128")
+	num_amplitudes = len(raw) // STATEVECTOR_BYTES_PER_AMPLITUDE
+	expected_amplitudes = payload.get("num_amplitudes")
+	if (expected_amplitudes is not None and
+			int(expected_amplitudes) != num_amplitudes):
+		raise ValueError(
+			f"Statevector amplitude count mismatch: expected "
+			f"{expected_amplitudes}, got {num_amplitudes}")
+	_resolve_num_qubits(num_amplitudes, payload.get("num_qubits"))
+	return _statevector_from_bytes(raw)
+
+
 def statevector_payload_size_summary(payload):
 	return {
 		"num_qubits": payload.get("num_qubits"),
@@ -199,8 +268,8 @@ class QFwStatevector:
 		return cls(amplitudes, num_qubits=num_qubits, source=source,
 				   metadata=metadata)
 
-	def to_dict(self):
+	def to_dict(self, encoding=None):
 		return _encode_statevector_bytes(
 			self._raw, self._num_amplitudes,
 			num_qubits=self._num_qubits, source=self._source,
-			metadata=self._metadata)
+			metadata=self._metadata, encoding=encoding)
