@@ -140,7 +140,8 @@ def qfw_srun(argv):
     allocation = _allocation_context_from_env(env)
     _publish_allocation_environment(env, allocation)
     _configure_application_defw_environment(env, state)
-    defw_python = _command_path("defw-python", env=env)
+    defw_python = _command_path(
+        qfw_config.defw_python_command(env), env=env)
     command = _application_launch_command(
         [str(defw_python), *args.application],
         allocation,
