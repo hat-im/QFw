@@ -766,6 +766,58 @@ def test_private_qpm_launcher_serves_its_module_on_v2(tmp_path, monkeypatch):
     assert captured["env"]["DEFW_PARENT_PORT"] == "8090"
 
 
+def test_private_qpm_launcher_binds_v2_to_this_node_when_no_host_is_named(
+        tmp_path, monkeypatch):
+    # The site manifest names no host for a QPM. v1's fallback of 127.0.0.1
+    # was only ever advertised, but a v2 QPM bound to loopback could not
+    # reach a directory on another node.
+    manifest_path = tmp_path / "site-services.yaml"
+    manifest_path.write_text(
+        "\n".join([
+            "services:",
+            "  - name: nwqsim",
+            "    module: svc_nwqsim_qpm",
+            "    credential-mode: no-secret",
+            "    listen-port: 18494",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    site_path = tmp_path / "site.yaml"
+    site_path.write_text(
+        "\n".join([
+            "directory-service:",
+            "  endpoint: dirsvc-node:8190",
+            "service:",
+            f"  manifest: {manifest_path}",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def fake_start(name, env, role, *args):
+        captured["env"] = dict(env)
+        return 0
+
+    monkeypatch.setenv("QFW_SERVICE_SCOPE", "site")
+    monkeypatch.setenv("QFW_DEFW_VERSION", "2")
+    monkeypatch.delenv("DEFW2_ADDRESS", raising=False)
+    monkeypatch.setattr(process_launcher.socket, "gethostname",
+                        lambda: "qpm-node")
+    monkeypatch.setattr(
+        process_launcher, "_start_defw_owned_process", fake_start)
+
+    rc = process_launcher.start_qpm([
+        "--service-id", "nwqsim",
+        "--site-config", str(site_path),
+        "--run-dir", str(tmp_path / "run"),
+    ])
+
+    assert rc == 0
+    assert captured["env"]["DEFW2_ADDRESS"] == "ofi+tcp://qpm-node:18494"
+
+
 def test_defw_version_is_one_or_two():
     assert qfw_config.defw_version({}) == 1
     assert qfw_config.defw_version({"QFW_DEFW_VERSION": " 2 "}) == 2
