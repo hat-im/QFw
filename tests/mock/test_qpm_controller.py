@@ -6,6 +6,7 @@ from tests.mock.fakes import FakeSchedulerContext
 from util.qpm.controller import (
 	QPM_TASK_CANCELLED,
 	_clear_target_controllers_for_tests,
+	_completion_record_size_bytes,
 )
 from util.qpm.request import parse_execution_request
 from util.qpm.util_qpm import UTIL_QPM
@@ -94,10 +95,10 @@ class TrackingLock:
 
 
 class HookQPM(UTIL_QPM):
-	def __init__(self, target_id="target-a"):
+	def __init__(self, target_id="target-a", qrc=None):
 		self.hooks = []
 		super().__init__(
-			FakeQRC(),
+			qrc or FakeQRC(),
 			target_id=target_id,
 			admission_context_factory=FakeAdmissionContext,
 			scheduler_context_factory=FakeSchedulerContext,
@@ -414,3 +415,75 @@ def test_control_shutdown_finalizer_stops_provider_then_exits(monkeypatch):
 	assert qpm.qrc is None
 	assert qpm.controller.service_state == "stopped"
 	assert exits == [True]
+
+
+def test_completion_record_size_counts_text_as_repr_does():
+	record = {
+		"cid": "c-1",
+		"outcome": "COMPLETED",
+		"result": {"counts": {"00": 512, "11": 512}},
+		"times": [1.5, 2.5],
+		"_qpm_record_size_bytes": 99,
+	}
+	public = {key: value for key, value in record.items()
+		  if not key.startswith("_qpm_")}
+
+	assert _completion_record_size_bytes(record) == \
+		len(repr(public).encode("utf-8"))
+
+
+def test_completion_record_size_counts_raw_bytes_once():
+	# A statevector carried raw, as on DEFw v2. repr spells a byte as up to
+	# four characters, so it used to count this about three times over,
+	# and building that text is what made a 20-qubit read_cq wait.
+	data = bytes(range(256)) * 64
+	payload = {"type": "statevector", "encoding": "raw", "data": data}
+	record = {"cid": "c-2", "result": {"statevector": payload}}
+	without = {"cid": "c-2",
+		   "result": {"statevector": dict(payload, data=None)}}
+
+	assert _completion_record_size_bytes(record) == \
+		len(repr(without).encode("utf-8")) + len(data)
+	assert _completion_record_size_bytes(
+		{"cid": "c-3", "data": [memoryview(data), bytearray(8)]}) == \
+		len(repr({"cid": "c-3", "data": [None, None]})) + len(data) + 8
+
+
+def test_async_run_survives_a_task_finished_before_its_handle_is_bound(
+		monkeypatch):
+	_setup_qpm(monkeypatch)
+	qpm = HookQPM()
+	original = qpm.controller.task_for_cid
+	finished = []
+
+	def look_up_then_finish(cid):
+		runtime = original(cid)
+		# The provider's own thread finishes the task here, between the
+		# submitter's lookup and its bind, as a fast one did under load.
+		for circuit in qpm.qrc.async_circuits:
+			if circuit.get_cid() == cid and cid not in finished:
+				finished.append(cid)
+				circuit.set_launching()
+				circuit.set_running()
+				circuit.set_exec_done()
+				circuit.free_resources(circuit, result={
+					"cid": cid,
+					"qtask_id": circuit.info["qtask_id"],
+					"outcome": "COMPLETED",
+					"rc": 0,
+					"result": {"00": 1},
+				})
+		return runtime
+
+	monkeypatch.setattr(qpm.controller, "task_for_cid", look_up_then_finish)
+
+	response = qpm.async_run(
+		{"qasm": "OPENQASM 2.0;", "num_qubits": 2}, reservation_id="1")
+	status = qpm.controller.task_status_for_cid(
+		response["cid"], reservation_id="1")
+
+	assert finished == [response["cid"]]
+	assert qpm.controller.task_for_qtask_id(response["qtask_id"]) is None
+	assert status["outcome"] == "COMPLETED"
+	# Nothing was bound to the retired task, so no handle points at it.
+	assert qpm.controller.qtask_id_by_provider_handle == {}
