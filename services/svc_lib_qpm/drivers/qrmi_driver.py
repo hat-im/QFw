@@ -185,14 +185,43 @@ def _status_str(status):
 	return str(status).lower()
 
 
+DEFAULT_SHOTS = 1024
+
+
+def num_shots(info: dict, default: int = DEFAULT_SHOTS) -> int:
+	"""Return the shot count from a circuit info dict.
+
+	Accepts both the canonical ``num_shots`` key and the legacy ``shots``
+	alias, falling back to *default* when neither is present.
+	"""
+	return int(info.get("num_shots") or info.get("shots") or default)
+
+
+def _first_error_line(logs):
+	# Scan provider log text for the first line that looks like an error.
+	# Returns that line (stripped) so the caller can append it to the
+	# DEFwExecutionError message. Returns None when logs is empty/None or
+	# when no error line is found.
+	if not logs:
+		return None
+	for line in logs.splitlines():
+		stripped = line.strip()
+		if not stripped:
+			continue
+		lower = stripped.lower()
+		if any(tok in lower for tok in ("error", "exception", "traceback", "failed", "fatal")):
+			return stripped
+	return None
+
+
 class QrmiDriver(BaseDriver):
 	name = "qrmi"
 	CAPABILITIES = frozenset({
-		"get_device_info",           # target() -> qhw-iqm device
-		"get_coupling_graph",        # target() -> qhw-iqm coupling
-		"get_calibration_snapshot",  # target() -> qhw-iqm calibration
-		"get_dynamic_backend_info",  # target() -> dynamic architecture
-		"get_backend_info",          # target() -> native composite + qhw device
+		"get_device_info",
+		"get_coupling_graph",
+		"get_calibration_snapshot",
+		"get_dynamic_backend_info",
+		"get_backend_info",
 		"run_circuit",
 		"get_task_timing",
 		"get_task_metadata",
@@ -628,11 +657,25 @@ class QrmiDriver(BaseDriver):
 		cache_key = self._credential_cache_key(credential)
 		if cache_key not in self._target_cache:
 			try:
-				self._target_cache[cache_key] = json.loads(
+				target_data = json.loads(
 					self._qpu(credential=credential).target().value)
 			except Exception as exc:
 				raise self._qrmi_error(
 					exc, "failed to read QRMI target()") from exc
+
+			# IBM target() returns null for configuration or properties on failure.
+			# To avoid caching a failed or half-failed payload (which would stick
+			# in the cache after IBM recovers), do not cache if either is None.
+			if self._provider() == "ibm":
+				if (
+					isinstance(target_data, dict)
+					and target_data.get("configuration") is not None
+					and target_data.get("properties") is not None
+				):
+					self._target_cache[cache_key] = target_data
+			else:
+				self._target_cache[cache_key] = target_data
+			return target_data
 		return self._target_cache[cache_key]
 
 	def _static_arch(self, target):
@@ -666,17 +709,40 @@ class QrmiDriver(BaseDriver):
 	def _device_id(self):
 		return self._descriptor.get("id", "iqm-device")
 
-	# --- introspection facet: reuse qhw-iqm on QRMI's raw IQM data ------
+	def _provider(self):
+		return str(self._descriptor.get("provider") or "iqm").lower()
+
+	# --- introspection facet: reuse qhw-iqm / qhw-ibm on QRMI's raw data -
 
 	def get_device_info(self):
+		if self._provider() == "ibm":
+			from qhw_ibm import normalize_device
+			target_config_json = self._target().get("configuration") or {}
+			if not target_config_json:
+				raise DEFwExecutionError("QRMI failed to retrieve the backend data")
+			return normalize_device(target_config_json, device_id=self._device_id())
 		from qhw_iqm import normalize_device
 		return normalize_device(self._arch_raw(), device_id=self._device_id())
 
 	def get_coupling_graph(self, calibration_set_id=None):
+		if self._provider() == "ibm":
+			from qhw_ibm import normalize_coupling
+			target_config_json = self._target().get("configuration") or {}
+			if not target_config_json:
+				raise DEFwExecutionError("QRMI failed to retrieve the backend data")
+			return normalize_coupling(target_config_json, device_id=self._device_id())
 		from qhw_iqm import normalize_coupling
 		return normalize_coupling(self._arch_raw(), device_id=self._device_id())
 
 	def get_calibration_snapshot(self, calibration_set_id=None):
+		if self._provider() == "ibm":
+			# The calibration normalizer reads the properties sub-dict
+			# (qubits, gates, last_update_date).
+			from qhw_ibm import normalize_calibration
+			target_props_json = self._target().get("properties") or {}
+			if not target_props_json:
+				raise DEFwExecutionError("QRMI failed to retrieve the backend data")
+			return normalize_calibration(target_props_json, device_id=self._device_id())
 		# target() carries the IQM calibration_set + quality_metrics; feed them
 		# (with the dynamic architecture) to qhw-iqm — the same normalizer the
 		# native svc_iqm_qpm path uses — to build a qhw-calibration-v1 record.
@@ -693,6 +759,15 @@ class QrmiDriver(BaseDriver):
 		return normalize_calibration(raw, device_id=self._device_id())
 
 	def get_dynamic_backend_info(self, calibration_set_id=None):
+		if self._provider() == "ibm":
+			# IBM target() has no live dynamic state; configuration and
+			# properties are static snapshots with no calibration_set_id or
+			# active qubit list equivalent.
+			return {
+				"backend": "ibm",
+				"metadata_supported": False,
+				"dynamic_architecture": {},
+			}
 		# The dynamic architecture as-is, matching the native svc_iqm_qpm shape
 		# (a provider dict, not a qhw record).
 		return {
@@ -703,6 +778,23 @@ class QrmiDriver(BaseDriver):
 		}
 
 	def get_backend_info(self):
+		if self._provider() == "ibm":
+			from qhw_ibm import normalize_device
+			target_config_json = self._target().get("configuration") or {}
+			if not target_config_json:
+				raise DEFwExecutionError("QRMI failed to retrieve the backend data")
+			qhw_device = normalize_device(target_config_json, device_id=self._device_id())
+			qubits_len = len(qhw_device.get("qubits", []))
+			n_qubits = target_config_json.get("n_qubits", qubits_len)
+			return {
+				"backend": "ibm",
+				"metadata_supported": True,
+				"static_architecture": target_config_json,
+				"active_qubits": list(range(n_qubits)),
+				"calibration_set_id": None,
+				"qhw_device": qhw_device,
+			}
+
 		# Native composite shape (mirrors svc_iqm_qpm.get_backend_info): the
 		# provider fields plus an embedded qhw device record. The static
 		# architecture is empty against QRMI older than 0.22.0, which did not
@@ -720,46 +812,82 @@ class QrmiDriver(BaseDriver):
 					self._arch_raw(), device_id=self._device_id()),
 		}
 
-	# --- execution: OpenQASM -> IQM JSON -> QRMI task lifecycle ----------
+	# --- execution: OpenQASM/QPY -> QRMI task lifecycle ----------------------
 
-	def run_circuit(self, circuit):
+	def run_circuit(self, source):
 		# The circuit arrives in a format this QPM declares, QPY or OpenQASM 2
 		# (see util.circuit_payload). Transcode it to an IQM circuit with the
 		# shared util, submit through QRMI's task lifecycle, poll to completion,
 		# and normalize the counts to qhw-result-v1 (the same normalizer the
 		# native svc_iqm_qpm path uses). QRMI-for-IQM has no acquire/release, so
 		# there is no reservation step.
-		qrmi = self._resource()
-		info = getattr(circuit, "info", None) or {}
-		credential = getattr(circuit, "provider_credential", None)
-		cid = circuit.get_cid() if hasattr(circuit, "get_cid") else info.get("cid")
-		from util.circuit_payload import qiskit_input
-		source = qiskit_input(info)
-		shots = int(info.get("num_shots", info.get("shots", 1024)))
-		mapping = info.get("iqm_qubit_mapping") or info.get("qubit_mapping")
-		use_timeslot = bool(info.get("use_timeslot", False))
+		provider = self._provider()
+		if provider == "ibm":
+			return self._run_ibm_circuit(source)
+		return self._run_iqm_circuit(source)
+
+	def _run_ibm_circuit(self, source):
+		# Lifecycle: build backend target -> build Qiskit SamplerV2 payload ->
+		# submit via QRMI -> normalize the result to qhw-result-v1.
+		from util.circuit_payload import is_qpy_circuit_provided, QPY_FORMATS
+		info = getattr(source, "info", None) or {}
+		if not is_qpy_circuit_provided(info):
+			raise DEFwExecutionError(
+				"A circuit targeted to run in an IBM Quantum device must be serialized"
+				" using QPY to preserve all its properties. Please update the data and"
+				" format fields in the info[circuit] provided accordingly to a"
+				f" QPY format: {QPY_FORMATS}")
+
+		target, target_config_json = self._build_backend_target(source)
+		payload = self._build_ibm_payload(source, target)
+		result_json, job = self._run_sampler_payload(payload, source)
+
+		# Update last_job with IBM measurements.
+		if job is not None:
+			results = result_json.get("results") or []
+			data = results[0].get("data") or {}
+			job["measurements"] = data
+			self._last_job = job
+
+		# The JSON returned by qrmi.task_start is a Qiskit runtime SamplerV2, which is
+		# focused on the measured samples and does not include device and job information.
+		# They are both returned by separated API calls.
+		raw = {
+			"device": {
+				"raw_configuration": target_config_json,
+			},
+			"job": job,
+			"raw_results": result_json
+		}
+
+		from qhw_ibm import normalize_result
+		return normalize_result(raw, device_id=self._device_id())
+
+	def _task_logs(self, job_id, credential=None):
+		# Best effort: the caller is already failing, so anything that goes
+		# wrong here is logged and dropped rather than raised. A backend that
+		# does not implement task_logs raises UnsupportedFunctionError.
+		try:
+			return str(self._qpu(credential=credential).task_logs(job_id))
+		except Exception as exc:
+			logging.warning(
+				"shim: QRMI task_logs for job %s failed: %s", job_id, exc)
+			return ""
+
+	def _run_sampler_payload(self, payload, source):
+		# Submit the SamplerV2 payload via QRMI task_start -> poll to
+		# completion -> fetch task_result JSON. Time is measured along the way.
+		info = getattr(source, "info", None) or {}
+		credential = getattr(source, "provider_credential", None)
+		cid = source.get_cid() if hasattr(source, "get_cid") else info.get("cid")
+
+		shots = num_shots(info)
 		timeout = float(info.get("timeout", DEFAULT_JOB_TIMEOUT_SECONDS))
 		poll = float(info.get("poll_interval", 1.0))
 
-		target = self._target(credential=credential)
-		dynamic = target.get("dynamic_quantum_architecture") or {}
-		calibration_set_id = (
-			info.get("calibration_set_id")
-			or info.get("iqm_calibration_set_id")
-			or dynamic.get("calibration_set_id"))
-
-		from util.iqm_transcode import build_iqm_circuit
-		iqm_circuit = build_iqm_circuit(source, dynamic, mapping)
-		iqmjson, run_request = self._build_iqmjson(
-				iqm_circuit, shots, calibration_set_id)
-
-		payload = qrmi.Payload.IQMServer(
-			iqmjson=iqmjson, job_type="circuit",
-			use_timeslot=use_timeslot, tag=None)
-
 		# Set by the shim QRC when the QPM cancels this circuit. A cancel that
 		# arrives before submission starts nothing at the provider.
-		cancel_event = getattr(circuit, "cancel_event", None)
+		cancel_event = getattr(source, "cancel_event", None)
 		if cancel_event is not None and cancel_event.is_set():
 			raise DEFwExecutionError(
 				"QRMI job was cancelled before it was submitted")
@@ -778,11 +906,25 @@ class QrmiDriver(BaseDriver):
 		timing["wait_seconds"] = (
 			time.monotonic() - start - timing["submit_seconds"])
 		if status != "completed":
-			self._last_job = {
+			# task_status reports the state, not the cause. The provider's own log
+			# is the only place the reason exists, so it goes to the operator in
+			# full and to the caller as one line.
+			logs = self._task_logs(job_id, credential=credential)
+			# Nothing else to do with the failed job, we can delete it.
+			self._stop_task(job_id, credential=credential)
+			if logs:
+				logging.error(
+					"shim: QRMI job %s %s; provider logs:\n%s",
+					job_id, status, logs)
+			job = {
 				"id": str(job_id), "status": status, "cid": cid,
-				"timing": timing, "shots": shots}
-			raise DEFwExecutionError(
-				f"QRMI job {job_id} finished with status {status!r}")
+				"timing": timing, "shots": shots, "logs": logs}
+			self._last_job = job
+			message = f"QRMI job {job_id} finished with status {status!r}"
+			reason = _first_error_line(logs)
+			if reason:
+				message += f": {reason}"
+			raise DEFwExecutionError(message)
 
 		result_started = time.monotonic()
 		try:
@@ -793,23 +935,121 @@ class QrmiDriver(BaseDriver):
 		timing["result_fetch_seconds"] = time.monotonic() - result_started
 		timing["total_wall_seconds"] = time.monotonic() - start
 
+		# Nothing else to do with the completed task, we can delete it.
+		# The same behavior is implemented in QRMI's task_runner.
+		self._stop_task(job_id, credential=credential)
+
+		job = {"id": str(job_id), "status": "completed", "cid": cid,
+			   "timing": timing, "shots": shots}
+		self._last_job = job
+
+		return result_json, job
+
+	def _build_backend_target(self, source):
+		# Fetch the raw backend configuration and properties via QRMI, then
+		# convert them to a Qiskit Target used for ISA compilation.
+		try:
+			from qiskit_ibm_runtime.utils.backend_converter import convert_to_target
+			from qiskit_ibm_runtime.models import BackendProperties, BackendConfiguration
+		except Exception as exc:
+			raise DEFwExecutionError(
+				f"failed to import qiskit_ibm_runtime models: {exc}") from exc
+
+		target_data = self._target(credential=getattr(source, "provider_credential", None))
+		target_config_json = target_data.get("configuration")
+		target_props_json = target_data.get("properties")
+
+		if not target_config_json or not target_props_json:
+			raise DEFwExecutionError("QRMI failed to retrieve the backend data")
+
+		backend_config = BackendConfiguration.from_dict(target_config_json)
+		backend_props = BackendProperties.from_dict(target_props_json)
+		target = convert_to_target(backend_config, backend_props)
+		return target, target_config_json
+
+	def _build_ibm_payload(self, source, target):
+		# Transcode the circuit to an ISA circuit against the backend target,
+		# then wrap it as a Qiskit SamplerV2 primitive payload for QRMI.
+		info = getattr(source, "info", None) or {}
+		shots = num_shots(info)
+		compilation_options = info.get("compilation_options") or {}
+		param_values = info.get("param_values") or {}
+
+		from util.circuit_payload import qiskit_input
+		qiskit_circuit = qiskit_input(info)
+
+		try:
+			from qiskit.circuit import QuantumCircuit
+		except Exception as exc:
+			raise DEFwExecutionError("Failed to import qiskit QuantumCircuit") from exc
+
+		if (
+			isinstance(qiskit_circuit, QuantumCircuit)
+			and qiskit_circuit.num_parameters
+			and not param_values
+		):
+			raise DEFwExecutionError(
+				  "'param_values' must be defined in info (as a dict keyed by"
+				  " parameter name strings) for the following circuit parameters:"
+				  f" {[p.name for p in qiskit_circuit.parameters]}")
+
+		from util.ibm_transcode import compile_circuit
+		isa_circuit = compile_circuit(qiskit_circuit, target, compilation_options)
+
+		from util.ibm_transcode import qiskit_sampler_input_json
+		input_json = qiskit_sampler_input_json(isa_circuit, param_values, shots)
+
+		qrmi = self._resource()
+		return qrmi.Payload.QiskitPrimitive(input=input_json, program_id="sampler")
+
+	def _run_iqm_circuit(self, source):
+		# Build IQM run request -> wrap as Payload.IQMServer -> delegate
+		# submit/poll/fetch to _run_sampler_payload -> normalize to
+		# qhw-result-v1 and patch measurements into _last_job.
+		qrmi = self._resource()
+
+		info = getattr(source, "info", None) or {}
+		shots = num_shots(info)
+		mapping = info.get("iqm_qubit_mapping") or info.get("qubit_mapping")
+		use_timeslot = bool(info.get("use_timeslot", False))
+
+		target = self._target(credential=getattr(source, "provider_credential", None))
+		dynamic = target.get("dynamic_quantum_architecture") or {}
+		calibration_set_id = (
+			info.get("calibration_set_id")
+			or info.get("iqm_calibration_set_id")
+			or dynamic.get("calibration_set_id"))
+
+		from util.circuit_payload import qiskit_input
+		from util.iqm_transcode import build_iqm_circuit
+		circuit = qiskit_input(info)
+		iqm_circuit = build_iqm_circuit(circuit, dynamic, mapping)
+		iqmjson, run_request = self._build_iqmjson(
+				iqm_circuit, shots, calibration_set_id)
+
+		payload = qrmi.Payload.IQMServer(
+			iqmjson=iqmjson, job_type="circuit",
+			use_timeslot=use_timeslot, tag=None)
+
+		result_json, job = self._run_sampler_payload(payload, source)
+
+		# Update last_job with IQM measurements
+		if job is not None:
+			job["measurements"] = result_json.get("measurements") or {}
+			self._last_job = job
+
 		measurement_counts = result_json.get("measurement_counts")
 		circuits = run_request.get("circuits") if isinstance(
 				run_request, dict) else None
+		job_id = job.get("id") if job is not None else None
 		raw = {
-			"job": {"id": str(job_id), "status": "completed"},
+			"job": {"id": job_id, "status": "completed"},
 			"run_request": run_request if isinstance(run_request, dict) else {},
 			"measurement_counts": measurement_counts,
 			"circuits": circuits or [],
 		}
 		from qhw_iqm import normalize_result
-		record = normalize_result(raw, device_id=self._device_id())
-
-		self._last_job = {
-			"id": str(job_id), "status": "completed", "cid": cid,
-			"timing": timing, "shots": shots,
-			"measurements": result_json.get("measurements")}
-		return record
+		return normalize_result(raw, device_id=self._device_id())
 
 	def _build_iqmjson(self, iqm_circuit, shots, calibration_set_id):
 		# Build an iqm-client RunRequest the same way QRMI's own Qiskit adapter
