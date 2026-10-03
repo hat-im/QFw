@@ -95,10 +95,10 @@ class TrackingLock:
 
 
 class HookQPM(UTIL_QPM):
-	def __init__(self, target_id="target-a"):
+	def __init__(self, target_id="target-a", qrc=None):
 		self.hooks = []
 		super().__init__(
-			FakeQRC(),
+			qrc or FakeQRC(),
 			target_id=target_id,
 			admission_context_factory=FakeAdmissionContext,
 			scheduler_context_factory=FakeSchedulerContext,
@@ -447,3 +447,43 @@ def test_completion_record_size_counts_raw_bytes_once():
 	assert _completion_record_size_bytes(
 		{"cid": "c-3", "data": [memoryview(data), bytearray(8)]}) == \
 		len(repr({"cid": "c-3", "data": [None, None]})) + len(data) + 8
+
+
+def test_async_run_survives_a_task_finished_before_its_handle_is_bound(
+		monkeypatch):
+	_setup_qpm(monkeypatch)
+	qpm = HookQPM()
+	original = qpm.controller.task_for_cid
+	finished = []
+
+	def look_up_then_finish(cid):
+		runtime = original(cid)
+		# The provider's own thread finishes the task here, between the
+		# submitter's lookup and its bind, as a fast one did under load.
+		for circuit in qpm.qrc.async_circuits:
+			if circuit.get_cid() == cid and cid not in finished:
+				finished.append(cid)
+				circuit.set_launching()
+				circuit.set_running()
+				circuit.set_exec_done()
+				circuit.free_resources(circuit, result={
+					"cid": cid,
+					"qtask_id": circuit.info["qtask_id"],
+					"outcome": "COMPLETED",
+					"rc": 0,
+					"result": {"00": 1},
+				})
+		return runtime
+
+	monkeypatch.setattr(qpm.controller, "task_for_cid", look_up_then_finish)
+
+	response = qpm.async_run(
+		{"qasm": "OPENQASM 2.0;", "num_qubits": 2}, reservation_id="1")
+	status = qpm.controller.task_status_for_cid(
+		response["cid"], reservation_id="1")
+
+	assert finished == [response["cid"]]
+	assert qpm.controller.task_for_qtask_id(response["qtask_id"]) is None
+	assert status["outcome"] == "COMPLETED"
+	# Nothing was bound to the retired task, so no handle points at it.
+	assert qpm.controller.qtask_id_by_provider_handle == {}
