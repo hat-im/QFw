@@ -1754,8 +1754,19 @@ class QPMTargetController:
 			return runtime
 
 	def bind_provider_handle(self, qtask_id, provider_handle):
+		"""Bind a provider's handle to its task. A task the provider has
+		already finished, and the controller retired, has nothing left
+		to bind, and returns None.
+
+		The submitter looks the task up and binds it in two steps, and a
+		fast provider's own thread can finish the task in between. With
+		eight concurrent callers on DEFw v2, whose handlers run in
+		parallel, that turned one async_run in a few into a KeyError.
+		"""
 		with self.lock:
-			runtime = self.runtime_by_qtask_id[qtask_id]
+			runtime = self.runtime_by_qtask_id.get(qtask_id)
+			if runtime is None:
+				return None
 			runtime.provider_handle = provider_handle
 			self.qtask_id_by_provider_handle[provider_handle] = qtask_id
 			return runtime
