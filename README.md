@@ -332,9 +332,11 @@ QPM is served by `defw2-python --serve <module>`, and `qfw-srun` runs
 applications under `defw2-python`. Without the variable, or with it set to
 1, nothing changes. A v2 directory or QPM listens over `ofi+tcp` on the host
 and port v1 would have used, so every process finds the directory from the
-same `DEFW_PARENT_*` settings as on v1. A QPM on v2 returns a statevector as
-raw bytes, which DEFw moves straight into a buffer the caller lends, rather
-than as base64 of compressed bytes.
+same `DEFW_PARENT_*` settings as on v1. An application listens too, on its
+own host and a port Mercury picks, so a QPM can send it each completion as an
+event and the directory can send it each service change, as on v1. A QPM on
+v2 returns a statevector as raw bytes, which DEFw moves straight into a
+buffer the caller lends, rather than as base64 of compressed bytes.
 
 This is prototype work on the `defw2-prototype` branch, which merges to
 `main` only if the prototype succeeds.
