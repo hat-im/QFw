@@ -10,12 +10,15 @@ host slot, as the fake IQM QPM does, so a slot that is lost stops it.
 
 import threading
 
+import pytest
+
 import util.qpm.util_qpm as util_qpm
 from tests.mock.fakes import FakeSchedulerContext
 from tests.mock.test_qpm_scheduler import FakeAdmissionContext, FakeQRC
 from util.qpm.controller import (
 	QPM_TASK_FAILED,
 	QPM_TASK_QUEUED,
+	QPMTaskNotActive,
 	_clear_target_controllers_for_tests,
 )
 from util.qpm.util_qpm import UTIL_QPM
@@ -262,6 +265,53 @@ def test_a_task_another_thread_failed_stays_failed(monkeypatch):
 
 	assert _outcome(qpm, second["cid"]) == "FAILED"
 	assert qpm.free_hosts == {"localhost": 1}
+
+
+def test_a_refused_start_keeps_its_task_from_other_threads(monkeypatch):
+	_setup(monkeypatch)
+	qpm = OneSlotQPM()
+	first, second = _one_running_one_queued(qpm)
+
+	def refuse(task_id):
+		raise RuntimeError("failed to mark task started: rc=-7")
+
+	monkeypatch.setattr(
+		qpm.controller.scheduler_context, "task_started", refuse)
+	fail = qpm.fail_provider_submission
+	seen = []
+
+	def look_then_fail(circuit, error):
+		# Between the scheduler's refusal and the failure being
+		# recorded, another thread looks for work to dispatch.
+		select = qpm.controller.select_qtask_for_dispatch
+		seen.append(_in_thread(select))
+		return fail(circuit, error)
+
+	monkeypatch.setattr(qpm, "fail_provider_submission", look_then_fail)
+	_in_thread(lambda: _finish(qpm, first["cid"]))
+
+	# The task was still the dispatching thread's, so there was nothing
+	# for the other to take.
+	assert seen == [None]
+	assert _outcome(qpm, second["cid"]) == "FAILED"
+	assert qpm.controller.capacity_holds == {}
+	assert qpm.free_hosts == {"localhost": 1}
+
+
+def test_an_ended_task_is_not_authorized_again(monkeypatch):
+	_setup(monkeypatch)
+	qpm = OneSlotQPM()
+	_, second = _one_running_one_queued(qpm)
+	circuit = qpm.circuits[second["cid"]]
+	qpm.controller.cancel_task(
+		cid=second["cid"], reservation_id="1", reason="caller")
+
+	# A thread that still has the circuit asks for capacity for it again.
+	with pytest.raises(QPMTaskNotActive):
+		qpm.controller.authorize_capacity_hold(circuit)
+
+	assert second["qtask_id"] not in qpm.controller.capacity_holds
+	assert _outcome(qpm, second["cid"]) == "CANCELLED"
 
 
 def test_a_failure_after_the_slot_is_taken_gives_it_back(monkeypatch):

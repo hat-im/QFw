@@ -1361,6 +1361,14 @@ class QPMTargetController:
 				"reservation-scoped qtask is missing reservation state")
 		usage = self._estimated_usage(circuit, runtime)
 		with self.lock:
+			# Another thread may have ended the task since it was
+			# looked up. Authorizing it again would hold usage that
+			# nothing returns, and write over how it ended.
+			current = self.runtime_by_qtask_id.get(qtask_id)
+			if _task_ended(current) or current is not runtime:
+				raise QPMTaskNotActive(
+					"qtask is no longer active: "
+					f"qtask_id={qtask_id}")
 			authorized = authorize_usage(
 				self.admission_context, runtime.reservation_id, usage)
 			if authorized.get("status") == "accepted":
@@ -1449,9 +1457,9 @@ class QPMTargetController:
 		new task is selected, so selection stays one task at a time.
 		Two threads dispatching one task used to take its resources
 		twice, the second time after the first had finished it, and
-		lose them. The claim lasts until start_provider_submission or
-		release_dispatch_claim, and the claiming thread can select its
-		task again meanwhile.
+		lose them. The claim lasts until the scheduler starts the
+		task, the task ends, or release_dispatch_claim gives it back,
+		and the claiming thread can select its task again meanwhile.
 		"""
 		with self.lock:
 			runtime, busy = self._selected_runtime_locked()
@@ -1507,18 +1515,22 @@ class QPMTargetController:
 	def start_provider_submission(self, circuit, provider_handle=None):
 		qtask_id = circuit.info["qtask_id"]
 		with self.lock:
-			self.dispatching_qtask_ids.pop(qtask_id, None)
 			runtime = self.runtime_by_qtask_id.get(qtask_id)
 			if _task_ended(runtime):
+				self.dispatching_qtask_ids.pop(qtask_id, None)
 				raise QPMTaskNotActive(
 					"qtask is no longer active: "
 					f"qtask_id={qtask_id}")
 			if (qtask_id in self.provider_inflight or
 					runtime.state == QPM_TASK_SUBMITTED):
+				self.dispatching_qtask_ids.pop(qtask_id, None)
 				return None
 			if runtime.scheduler_task_id is not None:
+				# A start the scheduler refuses leaves the task
+				# this thread's until its failure is recorded.
 				mark_scheduler_task_started(
 					self.scheduler_context, runtime.scheduler_task_id)
+			self.dispatching_qtask_ids.pop(qtask_id, None)
 			self.selected_qtask_ids.discard(qtask_id)
 			self.provider_inflight.add(qtask_id)
 			if provider_handle is not None:
