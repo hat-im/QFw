@@ -145,6 +145,20 @@ def _normalize_optional_reservation_id(reservation_id):
 	return normalize_reservation_id(reservation_id)
 
 
+def _task_ended(runtime):
+	return runtime is None or runtime.state in QPM_TASK_TERMINAL_STATES
+
+
+class QPMTaskNotActive(RuntimeError):
+	"""A task another thread has already finished, failed or retired.
+
+	Many threads dispatch at once: a caller running its own task, and every
+	read_cq and provider completion that drains the out-of-resources queue.
+	One can finish a task, and the controller retire it, while another still
+	holds it, so a dispatch step that finds its task gone says so.
+	"""
+
+
 @dataclass(frozen=True)
 class QPMControllerConfig:
 	target_id: str
@@ -232,7 +246,16 @@ class QPMTargetController:
 		self.pending_capacity = {}
 		self.capacity_holds = {}
 		self.selected_qtask_ids = set()
+		# Selected tasks a thread is dispatching, by qtask_id, with the
+		# thread. Selection hands a task to one thread at a time, which
+		# keeps it until it starts the provider or gives the task back.
+		self.dispatching_qtask_ids = {}
 		self.provider_inflight = set()
+		# One thread drains the out-of-resources queue at a time. A
+		# thread that finds a drain under way asks for another pass,
+		# which the draining thread makes before it lets go.
+		self.oor_drain_lock = threading.Lock()
+		self.oor_drain_requested = False
 		self.worker_state = {}
 		self.event_endpoints = {}
 		self.callback_endpoints = {}
@@ -877,6 +900,7 @@ class QPMTargetController:
 				mark_scheduler_task_cancelled(
 					self.scheduler_context, runtime.scheduler_task_id)
 			self.selected_qtask_ids.discard(runtime.qtask_id)
+			self.dispatching_qtask_ids.pop(runtime.qtask_id, None)
 			self.provider_inflight.discard(runtime.qtask_id)
 			self.result_state.pop(runtime.qtask_id, None)
 			self.timeout_state.pop(runtime.qtask_id, None)
@@ -1381,7 +1405,11 @@ class QPMTargetController:
 		scheduler_error = None
 		scheduler_cause = None
 		with self.lock:
-			runtime = self.runtime_by_qtask_id[qtask_id]
+			runtime = self.runtime_by_qtask_id.get(qtask_id)
+			if runtime is None:
+				raise QPMTaskNotActive(
+					"qtask is no longer active: "
+					f"qtask_id={qtask_id}")
 			if runtime.scheduler_task_id is not None:
 				return runtime
 			if qtask_id not in self.capacity_holds:
@@ -1414,31 +1442,77 @@ class QPMTargetController:
 		return runtime_result
 
 	def select_qtask_for_dispatch(self):
+		"""The task to dispatch next, claimed for the calling thread.
+
+		A task already selected comes first. One that another thread
+		is dispatching is left to that thread, and while any is, no
+		new task is selected, so selection stays one task at a time.
+		Two threads dispatching one task used to take its resources
+		twice, the second time after the first had finished it, and
+		lose them. The claim lasts until start_provider_submission or
+		release_dispatch_claim, and the claiming thread can select its
+		task again meanwhile.
+		"""
 		with self.lock:
-			runtime = self._selected_runtime_locked()
+			runtime, busy = self._selected_runtime_locked()
+			if runtime is None and not busy:
+				runtime = self._select_scheduler_task_locked()
 			if runtime is not None:
-				return runtime
-			if not self._can_select_scheduler_task_locked():
-				return None
-			try:
-				assignment = select_next_scheduler_task(
-					self.scheduler_context)
-			except QPMSchedulerQueueEmpty:
-				return None
-			scheduler_task_id = assignment["task_id"]
-			runtime = self.task_for_scheduler_task_id(scheduler_task_id)
-			if runtime is None:
-				raise QPMAdmissionValidationError(
-					"selected scheduler task is not known to QPM: "
-					f"scheduler_task_id={scheduler_task_id}")
-			self.selected_qtask_ids.add(runtime.qtask_id)
-			runtime.state = QPM_TASK_SELECTED
+				self.dispatching_qtask_ids[runtime.qtask_id] = (
+					threading.get_ident())
 			return runtime
+
+	def _select_scheduler_task_locked(self):
+		if not self._can_select_scheduler_task_locked():
+			return None
+		try:
+			assignment = select_next_scheduler_task(
+				self.scheduler_context)
+		except QPMSchedulerQueueEmpty:
+			return None
+		scheduler_task_id = assignment["task_id"]
+		runtime = self.task_for_scheduler_task_id(scheduler_task_id)
+		if runtime is None:
+			raise QPMAdmissionValidationError(
+				"selected scheduler task is not known to QPM: "
+				f"scheduler_task_id={scheduler_task_id}")
+		self.selected_qtask_ids.add(runtime.qtask_id)
+		runtime.state = QPM_TASK_SELECTED
+		return runtime
+
+	def release_dispatch_claim(self, qtask_id):
+		"""Give back a task this thread claimed and did not start. It
+		stays selected, so the next dispatch tries it first."""
+		with self.lock:
+			self.dispatching_qtask_ids.pop(qtask_id, None)
+
+	def begin_oor_drain(self):
+		"""Take the out-of-resources queue to drain, or ask the thread
+		that has it for another pass. True when the caller drains."""
+		with self.lock:
+			self.oor_drain_requested = True
+		if not self.oor_drain_lock.acquire(blocking=False):
+			return False
+		with self.lock:
+			self.oor_drain_requested = False
+		return True
+
+	def end_oor_drain(self):
+		"""Let go of the queue. True when another pass was asked for
+		while it drained, which the caller then makes."""
+		self.oor_drain_lock.release()
+		with self.lock:
+			return self.oor_drain_requested
 
 	def start_provider_submission(self, circuit, provider_handle=None):
 		qtask_id = circuit.info["qtask_id"]
 		with self.lock:
-			runtime = self.runtime_by_qtask_id[qtask_id]
+			self.dispatching_qtask_ids.pop(qtask_id, None)
+			runtime = self.runtime_by_qtask_id.get(qtask_id)
+			if _task_ended(runtime):
+				raise QPMTaskNotActive(
+					"qtask is no longer active: "
+					f"qtask_id={qtask_id}")
 			if (qtask_id in self.provider_inflight or
 					runtime.state == QPM_TASK_SUBMITTED):
 				return None
@@ -1754,8 +1828,19 @@ class QPMTargetController:
 			return runtime
 
 	def bind_provider_handle(self, qtask_id, provider_handle):
+		"""Bind a provider's handle to its task. A task the provider has
+		already finished, and the controller retired, has nothing left
+		to bind, and returns None.
+
+		The submitter looks the task up and binds it in two steps, and a
+		fast provider's own thread can finish the task in between. With
+		eight concurrent callers on DEFw v2, whose handlers run in
+		parallel, that turned one async_run in a few into a KeyError.
+		"""
 		with self.lock:
-			runtime = self.runtime_by_qtask_id[qtask_id]
+			runtime = self.runtime_by_qtask_id.get(qtask_id)
+			if runtime is None:
+				return None
 			runtime.provider_handle = provider_handle
 			self.qtask_id_by_provider_handle[provider_handle] = qtask_id
 			return runtime
@@ -1768,8 +1853,13 @@ class QPMTargetController:
 			return runtime
 
 	def set_task_state(self, qtask_id, state):
+		"""Set a task's state, or return None for a task another thread
+		has already retired: a caller that looked it up a moment earlier
+		has nothing left to change."""
 		with self.lock:
-			runtime = self.runtime_by_qtask_id[qtask_id]
+			runtime = self.runtime_by_qtask_id.get(qtask_id)
+			if runtime is None:
+				return None
 			runtime.state = state
 			return runtime
 
@@ -1787,6 +1877,7 @@ class QPMTargetController:
 					self.scheduler_context, runtime.scheduler_task_id)
 			self.provider_inflight.discard(qtask_id)
 			self.selected_qtask_ids.discard(qtask_id)
+			self.dispatching_qtask_ids.pop(qtask_id, None)
 			self.result_state[qtask_id] = result
 			self.timeout_state.pop(qtask_id, None)
 			runtime.state = QPM_TASK_COMPLETED
@@ -1819,6 +1910,7 @@ class QPMTargetController:
 				self.scheduler_context, runtime.scheduler_task_id)
 		self.provider_inflight.discard(qtask_id)
 		self.selected_qtask_ids.discard(qtask_id)
+		self.dispatching_qtask_ids.pop(qtask_id, None)
 		self.timeout_state.pop(qtask_id, None)
 		runtime.state = QPM_TASK_FAILED
 		if error is not None:
@@ -1836,7 +1928,9 @@ class QPMTargetController:
 
 	def record_timeout(self, qtask_id, reason=None, message=None):
 		with self.lock:
-			runtime = self.runtime_by_qtask_id[qtask_id]
+			runtime = self.runtime_by_qtask_id.get(qtask_id)
+			if runtime is None:
+				return None
 			self.timeout_state[qtask_id] = {
 				"reason": reason,
 				"message": message,
@@ -1874,6 +1968,7 @@ class QPMTargetController:
 			self.pending_capacity.pop(qtask_id, None)
 			self.capacity_holds.pop(qtask_id, None)
 			self.selected_qtask_ids.discard(qtask_id)
+			self.dispatching_qtask_ids.pop(qtask_id, None)
 			self.provider_inflight.discard(qtask_id)
 			self.timeout_state.pop(qtask_id, None)
 			if runtime.state != QPM_TASK_FAILED:
@@ -3401,12 +3496,22 @@ class QPMTargetController:
 		return unused
 
 	def _selected_runtime_locked(self):
+		"""The first selected task no other thread is dispatching, and
+		whether another thread is dispatching one."""
+		busy = False
+		me = threading.get_ident()
 		for qtask_id in sorted(self.selected_qtask_ids):
 			runtime = self.runtime_by_qtask_id.get(qtask_id)
-			if runtime is not None:
-				return runtime
-			self.selected_qtask_ids.discard(qtask_id)
-		return None
+			if _task_ended(runtime):
+				self.selected_qtask_ids.discard(qtask_id)
+				self.dispatching_qtask_ids.pop(qtask_id, None)
+				continue
+			holder = self.dispatching_qtask_ids.get(qtask_id)
+			if holder is not None and holder != me:
+				busy = True
+				continue
+			return runtime, busy
+		return None, busy
 
 	def _can_select_scheduler_task_locked(self):
 		if self.scheduler_control["paused"] or self.scheduler_control["draining"]:
