@@ -242,6 +242,28 @@ def test_a_failed_dispatch_fails_one_task_not_the_queue(monkeypatch):
 	assert qpm.free_hosts == {"localhost": 1}
 
 
+def test_a_task_another_thread_failed_stays_failed(monkeypatch):
+	_setup(monkeypatch)
+	qpm = OneSlotQPM()
+	first, second = _one_running_one_queued(qpm)
+	qpm.fake_qrc.async_error = RuntimeError("provider refused the job")
+	fail = qpm.fail_provider_submission
+
+	def fail_then_defer(circuit, error):
+		runtime = fail(circuit, error)
+		# The task's own caller, out of resources a moment before,
+		# defers it here: after the dispatching thread failed it and
+		# before that thread gives back its slot.
+		_in_thread(lambda: qpm.defer_local_retry(circuit.get_cid()))
+		return runtime
+
+	monkeypatch.setattr(qpm, "fail_provider_submission", fail_then_defer)
+	_in_thread(lambda: _finish(qpm, first["cid"]))
+
+	assert _outcome(qpm, second["cid"]) == "FAILED"
+	assert qpm.free_hosts == {"localhost": 1}
+
+
 def test_a_failure_after_the_slot_is_taken_gives_it_back(monkeypatch):
 	_setup(monkeypatch)
 	qpm = OneSlotQPM()

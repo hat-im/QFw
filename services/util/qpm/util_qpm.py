@@ -14,10 +14,10 @@ from defw_exception import (
 	DEFwOutOfResources,
 )
 from .controller import (
+	QPM_TASK_CAPACITY_HELD,
+	QPM_TASK_CREATED,
 	QPM_TASK_PENDING_CAPACITY,
-	QPM_TASK_QUEUED,
 	QPM_TASK_RESOURCES_CONSUMED,
-	QPM_TASK_SELECTED,
 	QPM_TASK_TERMINAL_STATES,
 	QPMTaskNotActive,
 	controller_config,
@@ -878,13 +878,21 @@ class UTIL_QPM:
 			cid, reservation_id=request.context.reservation_id)
 
 	def defer_local_retry(self, cid):
-		runtime = self.controller.task_for_cid(cid)
-		if runtime is None:
-			return
-		if runtime.state in (QPM_TASK_QUEUED, QPM_TASK_SELECTED):
-			return
-		self.controller.set_task_state(
-			runtime.qtask_id, QPM_TASK_PENDING_CAPACITY)
+		"""Mark a task that has not reached the scheduler's queue as
+		waiting for capacity.
+
+		A task further on is left alone. Another thread may be
+		dispatching it, or have failed it, and writing over its state
+		strands the slot it holds, so the check and the write share one
+		hold of the lock.
+		"""
+		early = (QPM_TASK_CREATED, QPM_TASK_CAPACITY_HELD)
+		with self.controller.lock:
+			runtime = self.controller.task_for_cid(cid)
+			if runtime is None or runtime.state not in early:
+				return
+			self.controller.set_task_state(
+				runtime.qtask_id, QPM_TASK_PENDING_CAPACITY)
 
 	def read_cq(self, cid=None, reservation_id=None, token=None):
 		if not qpm_initialized:
