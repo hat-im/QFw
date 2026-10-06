@@ -336,7 +336,11 @@ same `DEFW_PARENT_*` settings as on v1. An application listens too, on its
 own host and a port Mercury picks, so a QPM can send it each completion as an
 event and the directory can send it each service change, as on v1. A QPM on
 v2 returns a statevector as raw bytes, which DEFw moves straight into a
-buffer the caller lends, rather than as base64 of compressed bytes.
+buffer the caller lends, rather than as base64 of compressed bytes. Since
+every one of these processes listens, DEFw v2 keeps Margo from spinning its
+progress loop between calls in each of them, so a busy QPM or client no
+longer holds a CPU while it waits for the next. How v2 compares with v1 on
+every workload is in `DEFw/docs/comparison_report_v2.md`.
 
 This is prototype work on the `defw2-prototype` branch, which merges to
 `main` only if the prototype succeeds.
