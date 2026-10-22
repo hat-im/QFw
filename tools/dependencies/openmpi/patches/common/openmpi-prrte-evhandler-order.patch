@@ -1,0 +1,28 @@
+--- a/3rd-party/prrte/src/prted/prun_common.c
++++ b/3rd-party/prrte/src/prted/prun_common.c
+@@ -221,6 +221,12 @@
+             pmix_output(0, "JOB %s COMPLETED WITH STATUS %d", PRTE_JOBID_PRINT(jobid), jobstatus);
+         }
+     }
++    /* we _always_ have to execute the evhandler callback or
++     * else the event progress engine will hang */
++    if (NULL != cbfunc) {
++        cbfunc(PMIX_EVENT_ACTION_COMPLETE, NULL, 0, NULL, NULL, cbdata);
++    }
++
+     if (NULL != lock) {
+         /* save the status */
+         lock->status = jobstatus;
+@@ -230,12 +236,6 @@
+         /* release the lock */
+         PRTE_PMIX_WAKEUP_THREAD(lock);
+     }
+-
+-    /* we _always_ have to execute the evhandler callback or
+-     * else the event progress engine will hang */
+-    if (NULL != cbfunc) {
+-        cbfunc(PMIX_EVENT_ACTION_COMPLETE, NULL, 0, NULL, NULL, cbdata);
+-    }
+ }
+ 
+ static void debug_cbfunc(size_t evhdlr_registration_id, pmix_status_t status,

@@ -42,6 +42,12 @@ tools/dependencies/tnqvm/build.sh \
 NWQ-Sim applies one patch, `patches/common/nwqsim-sv-omp.patch`, so that its OpenMP
 backend draws measurement random numbers once per run instead of once per thread.
 
+OpenMPI 5.0.9 (bundled PRRTE 3.0.12 and OpenPMIx 5.0.9) crashes `mpirun` intermittently at job end:
+the job-termination handler in `prun_common.c` wakes the main thread, which unregisters and frees the
+event handler, before it calls the PMIx callback that still reads it. There is no QFw build script for
+OpenMPI; when building it, apply `tools/dependencies/openmpi/patches/common/openmpi-prrte-evhandler-order.patch`
+from the OpenMPI source root (`patch -p1 < ...`) before `make`. It calls the callback first.
+
 NWQ-Sim also supports NVIDIA GPU acceleration via CUDA. Automatic CUDA selection
 requires `nvcc` and CUDA headers. Use `--cuda on` to require that toolchain,
 `--cuda off` to force the CPU build (default), or `--cuda auto` to auto-detect.
