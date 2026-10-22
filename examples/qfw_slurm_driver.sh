@@ -5,7 +5,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/qfw_example_common.sh"
 qfw_example_parse_common_options "$@"
-set -- "${QFW_EXAMPLE_REMAINING_ARGS[@]}"
+set -- ${QFW_EXAMPLE_REMAINING_ARGS[@]+"${QFW_EXAMPLE_REMAINING_ARGS[@]}"}
 
 usage() {
 	cat <<EOF
@@ -466,7 +466,7 @@ if [[ -n "${run_dir}" ]]; then
 	qfw_srun_base+=(--run-dir "${run_dir}")
 fi
 
-qfw_srun_control=("${qfw_srun_base[@]}" --nodes 1 --ntasks 1)
+qfw_srun_control=(${qfw_srun_base[@]+"${qfw_srun_base[@]}"} --nodes 1 --ntasks 1)
 if [[ -n "${nodelist}" ]]; then
 	qfw_srun_control+=(--nodelist "${nodelist}")
 fi
@@ -474,7 +474,7 @@ if [[ -n "${het_group}" ]]; then
 	qfw_srun_control+=(--het-group "${het_group}")
 fi
 
-qfw_srun_app=("${qfw_srun_base[@]}")
+qfw_srun_app=(${qfw_srun_base[@]+"${qfw_srun_base[@]}"})
 if [[ -n "${nodes}" ]]; then
 	qfw_srun_app+=(--nodes "${nodes}")
 fi
@@ -574,7 +574,7 @@ qfw_slurm_release() {
 	local output rc
 	set +e
 	output="$(
-		qfw_example_srun "${qfw_srun_control[@]}" \
+		qfw_example_srun ${qfw_srun_control[@]+"${qfw_srun_control[@]}"} \
 			"${release_command[@]}" \
 			--service-id "${service_id}" \
 			--reservation-id "${reservation_id}"
@@ -609,7 +609,7 @@ trap 'qfw_slurm_exit "$?"' EXIT
 qfw_slurm_emit "start" "running" 0 ""
 
 reserve_output="$(
-	qfw_example_srun "${qfw_srun_control[@]}" "${reserve_command[@]}"
+	qfw_example_srun ${qfw_srun_control[@]+"${qfw_srun_control[@]}"} "${reserve_command[@]}"
 )"
 printf "%s\n" "${reserve_output}" >&2
 reservation_id="$(
@@ -634,7 +634,7 @@ qfw_slurm_emit "reserved" "ok" 0 "${reservation_id}"
 set +e
 (
 	export QFW_RESERVATIONS="${reservation_context}"
-	qfw_example_srun "${qfw_srun_app[@]}" "$@"
+	qfw_example_srun ${qfw_srun_app[@]+"${qfw_srun_app[@]}"} "$@"
 )
 app_rc=$?
 set -e
