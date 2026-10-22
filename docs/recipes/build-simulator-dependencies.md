@@ -25,6 +25,13 @@ tools/dependencies/nwqsim/build.sh \
   --prefix /opt/openqse/nwqsim \
   --rocm auto
 
+tools/dependencies/nwqsim/build.sh \
+  --work-dir /var/tmp/qfw-dependencies/nwqsim-cuda \
+  --prefix /opt/openqse/nwqsim-cuda \
+  --cuda on \
+  --cuda-root /usr/local/cuda \
+  --cuda-arch 86
+
 tools/dependencies/tnqvm/build.sh \
   --work-dir /var/tmp/qfw-dependencies/tnqvm \
   --prefix /opt/openqse/tnqvm \
@@ -34,6 +41,13 @@ tools/dependencies/tnqvm/build.sh \
 
 NWQ-Sim applies one patch, `patches/common/nwqsim-sv-omp.patch`, so that its OpenMP
 backend draws measurement random numbers once per run instead of once per thread.
+
+NWQ-Sim also supports NVIDIA GPU acceleration via CUDA. Automatic CUDA selection
+requires `nvcc` and CUDA headers. Use `--cuda on` to require that toolchain,
+`--cuda off` to force the CPU build (default), or `--cuda auto` to auto-detect.
+The `--cuda-root` option specifies the CUDA installation root (default: `/usr/local/cuda`),
+and `--cuda-arch` selects the target GPU architecture by compute capability
+(default: `80` for A100; use `86` for RTX A5000, etc.).
 
 TNQVM applies the compatibility patch set used by both builds, followed by the
 validated CPU or ROCm patch set. Automatic ROCm selection requires `hipcc`,

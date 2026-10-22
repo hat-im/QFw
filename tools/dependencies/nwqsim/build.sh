@@ -14,6 +14,9 @@ CXX_BIN="${CXX:-g++}"
 ROCM_MODE="auto"
 ROCM_ROOT="${ROCM_PATH:-}"
 HIP_ARCH="${MY_HIP_ARCH:-${HIP_ARCH:-gfx90a}}"
+CUDA_MODE="off"
+CUDA_ROOT="${CUDA_PATH:-/usr/local/cuda}"
+CUDA_ARCH="${MY_CUDA_ARCH:-80}"
 
 usage() {
 	cat <<EOF
@@ -34,6 +37,9 @@ Options:
   --rocm auto|on|off    ROCm selection (default: auto)
   --rocm-root PATH      ROCm installation root
   --hip-arch ARCH       HIP architecture (default: ${HIP_ARCH})
+  --cuda auto|on|off    CUDA selection (default: off)
+  --cuda-root PATH      CUDA installation root (default: /usr/local/cuda)
+  --cuda-arch ARCH      CUDA architecture (default: 80)
   -h, --help            Show this help
 EOF
 }
@@ -55,6 +61,9 @@ while (($#)); do
 		--rocm) ROCM_MODE="${2:?missing value for --rocm}"; shift 2 ;;
 		--rocm-root) ROCM_ROOT="${2:?missing value for --rocm-root}"; shift 2 ;;
 		--hip-arch) HIP_ARCH="${2:?missing value for --hip-arch}"; shift 2 ;;
+		--cuda) CUDA_MODE="${2:?missing value for --cuda}"; shift 2 ;;
+		--cuda-root) CUDA_ROOT="${2:?missing value for --cuda-root}"; shift 2 ;;
+		--cuda-arch) CUDA_ARCH="${2:?missing value for --cuda-arch}"; shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		*) fail "unknown argument: $1" ;;
 	esac
@@ -64,6 +73,7 @@ done
 [[ -n "${INSTALL_PREFIX}" ]] || fail "--prefix is required"
 [[ "${BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]] || fail "--jobs must be positive"
 [[ "${ROCM_MODE}" =~ ^(auto|on|off)$ ]] || fail "invalid --rocm value"
+[[ "${CUDA_MODE}" =~ ^(auto|on|off)$ ]] || fail "invalid --cuda value"
 [[ -n "${PYTHON_BIN}" && -x "${PYTHON_BIN}" ]] || fail "invalid Python interpreter"
 
 detect_rocm() {
@@ -74,6 +84,13 @@ detect_rocm() {
 	ROCM_ROOT="${root}"
 }
 
+detect_cuda() {
+	local root="${CUDA_ROOT:-/usr/local/cuda}"
+	[[ -x "${root}/bin/nvcc" ]] || return 1
+	[[ -d "${root}/include" ]] || return 1
+	CUDA_ROOT="${root}"
+}
+
 ROCM_ENABLED=false
 case "${ROCM_MODE}" in
 	on)
@@ -82,6 +99,17 @@ case "${ROCM_MODE}" in
 		;;
 	auto)
 		if detect_rocm; then ROCM_ENABLED=true; fi
+		;;
+esac
+
+CUDA_ENABLED=false
+case "${CUDA_MODE}" in
+	on)
+		detect_cuda || fail "--cuda on requires nvcc and CUDA headers"
+		CUDA_ENABLED=true
+		;;
+	auto)
+		if detect_cuda; then CUDA_ENABLED=true; fi
 		;;
 esac
 
@@ -116,7 +144,17 @@ cmake_args=(
 	-DCMAKE_CXX_COMPILER="${CXX_BIN}"
 	-DPython_EXECUTABLE="${PYTHON_BIN}"
 )
-if ${ROCM_ENABLED}; then
+if ${CUDA_ENABLED}; then
+	export MY_CUDA_ARCH="${CUDA_ARCH}"
+	cmake_args+=(
+		-DNWQSIM_ENABLE_CUDA=ON
+		-DNWQSIM_ENABLE_HIP=OFF
+		-DNWQSIM_ENABLE_VQE=OFF
+		-DCMAKE_CUDA_COMPILER="${CUDA_ROOT}/bin/nvcc"
+		-DCMAKE_CUDA_HOST_COMPILER="${CXX_BIN}"
+		-DCUDA_ARCH="${CUDA_ARCH}"
+	)
+elif ${ROCM_ENABLED}; then
 	export ROCM_PATH="${ROCM_ROOT}"
 	export MY_HIP_ARCH="${HIP_ARCH}"
 	cmake_args+=(
@@ -137,5 +175,5 @@ cmake --install "${BUILD_DIR}"
 install -m 0755 "${BUILD_DIR}/qasm/nwq_qasm" \
 	"${INSTALL_PREFIX}/bin/circuit_runner.nwqsim"
 
-printf 'NWQ-Sim installed in %s (ROCm: %s)\n' \
-	"${INSTALL_PREFIX}" "${ROCM_ENABLED}"
+printf 'NWQ-Sim installed in %s (CUDA: %s, ROCm: %s)\n' \
+	"${INSTALL_PREFIX}" "${CUDA_ENABLED}" "${ROCM_ENABLED}"
