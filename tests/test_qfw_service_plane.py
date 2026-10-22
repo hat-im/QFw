@@ -496,6 +496,7 @@ def test_directory_lifecycle_publishes_connection_record(
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(service_plane, "_run_on_node", fake_run_on_node)
+    monkeypatch.setattr(service_plane, "_is_launcher_node", lambda _node: True)
     monkeypatch.setattr(
         service_plane, "_read_process_identity",
         lambda pid, *_args: process_identity(pid))
@@ -1362,3 +1363,158 @@ def test_process_state_reports_a_failed_probe_on_stderr(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "Permission denied" in captured.err
+
+
+SLURM = {"mode": "slurm"}
+
+
+class StubStep:
+    """Stands in for the `srun` client a remote service step is held by."""
+
+    def __init__(self, pid=4242, returncode=None, on_start=None):
+        self.pid = pid
+        self.returncode = returncode
+        if on_start:
+            on_start()
+
+    def poll(self):
+        return self.returncode
+
+
+def stub_step_launch(monkeypatch, step_factory):
+    launched = []
+
+    def popen(command, **kwargs):
+        launched.append((list(command), kwargs))
+        return step_factory()
+
+    monkeypatch.setattr(service_plane.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        service_plane.qfw_process_state, "local_process_identity",
+        lambda pid: process_identity(pid))
+    monkeypatch.setattr(service_plane, "_is_launcher_node", lambda _node: False)
+    return launched
+
+
+def test_node_launch_runs_directly_on_the_launcher_node(monkeypatch):
+    monkeypatch.setattr(socket, "gethostname", lambda: "c1.cluster.example")
+    command = ["python3", "-m", "service"]
+
+    assert service_plane._node_launch("c1", command, SLURM) == command
+    assert service_plane._node_launch(
+        "c1", command, {"mode": "heterogeneous"}) == command
+
+
+def test_node_launch_uses_a_step_for_another_node(monkeypatch):
+    monkeypatch.setattr(socket, "gethostname", lambda: "c1")
+    monkeypatch.delenv("SLURMD_NODENAME", raising=False)
+    command = ["python3", "-m", "service"]
+
+    assert service_plane._node_launch("c2", command, SLURM) == [
+        "srun", "--nodes=1", "--ntasks=1", "--nodelist", "c2", *command]
+    assert service_plane._node_launch(
+        "c2", command, SLURM, overlap=True) == [
+        "srun", "--overlap", "--nodes=1", "--ntasks=1", "--nodelist", "c2",
+        *command]
+    assert service_plane._node_launch("c2", command, {"mode": "local"}) == (
+        command)
+
+
+def test_service_on_the_launcher_node_detaches_itself(monkeypatch):
+    runs = []
+    monkeypatch.setattr(service_plane, "_is_launcher_node", lambda _node: True)
+    monkeypatch.setattr(
+        service_plane, "_run_on_node",
+        lambda node, command, env, allocation, check=True: runs.append(
+            (node, list(command))))
+    record = {}
+
+    service_plane._start_service(
+        record, "c1", ["svc", "--x"], ["--background"], {}, SLURM,
+        Path("/unused/launcher.log"), lambda: True, 5)
+
+    assert runs == [("c1", ["svc", "--x", "--background"])]
+    assert "launcher_pid" not in record
+
+
+def test_service_on_another_node_keeps_its_step_alive(tmp_path, monkeypatch):
+    launched = stub_step_launch(monkeypatch, StubStep)
+    record = {}
+
+    service_plane._start_service(
+        record, "c2", ["svc", "--x"], ["--background"], {"A": "1"}, SLURM,
+        tmp_path / "logs" / "launcher.log", lambda: True, 5)
+
+    command, options = launched[0]
+    assert command == [
+        "srun", "--overlap", "--nodes=1", "--ntasks=1", "--nodelist", "c2",
+        "svc", "--x"]
+    assert "--background" not in command
+    assert options["start_new_session"] is True
+    assert options["env"] == {"A": "1"}
+    assert record["launcher_pid"] == 4242
+    assert record["launcher_identity"] == process_identity(4242)
+
+
+def test_step_that_ends_before_its_service_is_ready_is_an_error(
+        tmp_path, monkeypatch):
+    stub_step_launch(monkeypatch, lambda: StubStep(returncode=1))
+    stopped = []
+    monkeypatch.setattr(
+        service_plane, "_stop_launcher_step", stopped.append)
+    record = {}
+
+    with pytest.raises(service_plane.ServicePlaneError, match="exited with 1"):
+        service_plane._start_service(
+            record, "c2", ["svc"], ["--background"], {}, SLURM,
+            tmp_path / "launcher.log", lambda: False, 5)
+
+    assert stopped == [record]
+
+
+def live_identity(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    return process_identity(pid)
+
+
+def test_stopping_a_launcher_step_terminates_its_srun_client(monkeypatch):
+    monkeypatch.setattr(service_plane, "TERMINATE_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(
+        service_plane.qfw_process_state, "local_process_identity",
+        live_identity)
+    client = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"])
+    component = {
+        "launcher_pid": client.pid,
+        "launcher_identity": process_identity(client.pid),
+    }
+    try:
+        service_plane._stop_launcher_step(component)
+        assert client.poll() is not None
+    finally:
+        if client.poll() is None:
+            client.kill()
+            client.wait()
+
+
+def test_stopping_a_component_without_a_launcher_step_signals_nothing(
+        monkeypatch):
+    monkeypatch.setattr(
+        os, "kill", lambda *_args: pytest.fail("no process may be signalled"))
+
+    service_plane._stop_launcher_step({"pid": 1})
+
+
+def test_stop_components_stops_the_launcher_step(monkeypatch):
+    stopped = []
+    monkeypatch.setattr(
+        service_plane, "_verified_component_status", lambda *_args: "dead")
+    monkeypatch.setattr(service_plane, "_stop_launcher_step", stopped.append)
+    component = {"role": "qpm", "pid": 1, "launcher_identity": {"pid": 2}}
+    state = {"components": {"qpm:a": component}, "allocation": SLURM}
+
+    assert service_plane._stop_components(state) == []
+    assert stopped == [component]

@@ -672,15 +672,20 @@ def _start_prte(state, timeout, service_environment=None):
         command.extend(_prte_runtime_args(state["allocation"]))
         if os.geteuid() == 0:
             command.append("--allow-run-as-root")
-        command.extend(["--keepalive", "0"])
-        command.append("--daemonize")
-        _run_on_node(dvm["launch_node"], command, process_environment,
-                     state["allocation"])
-        _wait_for(
-            lambda: (
+
+        def dvm_published():
+            return (
                 uri_path.exists() and uri_path.stat().st_size > 0
                 and pid_file.exists() and pid_file.stat().st_size > 0
-            ),
+            )
+
+        _start_service(
+            record, dvm["launch_node"], command,
+            ["--keepalive", "0", "--daemonize"],
+            process_environment, state["allocation"],
+            uri_path.parent / "launcher.log", dvm_published, timeout)
+        _wait_for(
+            dvm_published,
             timeout,
             f"PRTE DVM URI and PID under {uri_path.parent}",
         )
@@ -721,7 +726,6 @@ def _start_directory(state, timeout):
         command = [
             sys.executable or "python3",
             "-m", "qfw_runtime._process_launcher", "directory",
-            "--background",
             "--site-config", state["configuration"]["site_config"],
             "--run-dir", state["run_dir"],
             "--name", name,
@@ -732,8 +736,11 @@ def _start_directory(state, timeout):
             "--pid-file", str(pid_file),
             "--ready-file", str(ready_file),
         ]
-        _run_on_node(directory["target"], command, os.environ.copy(),
-                     state["allocation"])
+        _start_service(
+            record, directory["target"], command, ["--background"],
+            os.environ.copy(), state["allocation"],
+            component_dir / "logs" / "launcher.log",
+            lambda: _ready_file(ready_file), timeout)
         record["pid"] = _read_pid(pid_file)
         record["process_identity"] = _require_process_identity(
             record["pid"], record.get("node"), state["allocation"])
@@ -787,7 +794,6 @@ def _start_qpm(state, service, timeout, service_environment=None):
         command = [
             sys.executable or "python3",
             "-m", "qfw_runtime._process_launcher", "qpm",
-            "--background",
             "--run-dir", state["run_dir"],
             "--service-id", service_id,
             "--manifest-service-name", service["manifest_service_name"],
@@ -801,7 +807,10 @@ def _start_qpm(state, service, timeout, service_environment=None):
             "--pid-file", str(pid_file),
             "--ready-file", str(ready_file),
         ]
-        _run_on_node(service["target"], command, env, state["allocation"])
+        _start_service(
+            record, service["target"], command, ["--background"], env,
+            state["allocation"], component_dir / "logs" / "launcher.log",
+            lambda: _ready_file(ready_file), timeout)
         record["pid"] = _read_pid(pid_file)
         record["process_identity"] = _require_process_identity(
             record["pid"], record.get("node"), state["allocation"])
@@ -967,6 +976,7 @@ def _stop_components(state):
                     _terminate_pid(
                         int(component["pid"]), component.get("node"),
                         state["allocation"])
+            _stop_launcher_step(component)
             _discard_component_control_files(component)
             component["ready"] = False
             component["state"] = "stopped"
@@ -1200,21 +1210,110 @@ def _run_on_node(node, command, env, allocation, check=True):
     return result
 
 
-def _node_launch(node, command, allocation):
+def _node_launch(node, command, allocation, overlap=False):
     launch = list(command)
     mode = allocation.get("mode")
+    if mode not in {"slurm", "heterogeneous"} or _is_launcher_node(node):
+        return launch
+    step = ["--nodes=1", "--ntasks=1", "--nodelist", str(node)]
+    if overlap:
+        step.insert(0, "--overlap")
     if mode == "heterogeneous":
         group = _group_for_node(node, allocation)
-        launch = [
-            "srun", f"--het-group={group}", "--nodes=1", "--ntasks=1",
-            "--nodelist", str(node), *launch,
-        ]
-    elif mode == "slurm":
-        launch = [
-            "srun", "--nodes=1", "--ntasks=1", "--nodelist", str(node),
-            *launch,
-        ]
-    return launch
+        return ["srun", f"--het-group={group}", *step, *launch]
+    return ["srun", *step, *launch]
+
+
+def _is_launcher_node(node):
+    names = {_short_host(socket.gethostname())}
+    names.add(_short_host(os.environ.get("SLURMD_NODENAME", "")))
+    names.discard("")
+    return _short_host(node) in names
+
+
+def _short_host(name):
+    return str(name or "").split(".")[0]
+
+
+def _start_service(record, node, command, detach_args, env, allocation,
+                   log_path, ready, timeout):
+    """Start a long-lived service on *node* so that it outlives this call.
+
+    On the node this process runs on, the service detaches itself with
+    *detach_args*. On another node of a Slurm allocation, a service detaching
+    inside its own `srun` step is killed with the step once `srun` returns, so
+    the service instead runs in the foreground of a step whose `srun` client
+    stays alive. That client is recorded in *record* for `_stop_launcher_step`.
+
+    Raises:
+        ServicePlaneError: the step ended or *ready* did not hold in time.
+    """
+    launch = _node_launch(node, command, allocation, overlap=True)
+    if launch == list(command):
+        _run_on_node(node, [*command, *detach_args], env, allocation)
+        return
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("ab") as log:
+        step = subprocess.Popen(
+            launch,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    record["launcher_pid"] = step.pid
+    record["launcher_identity"] = qfw_process_state.local_process_identity(
+        step.pid)
+
+    def step_ready():
+        if ready():
+            return True
+        if step.poll() is not None:
+            raise ServicePlaneError(
+                f"srun step on {node} exited with {step.returncode} before "
+                f"its service was ready: {log_path}")
+        return False
+
+    try:
+        _wait_for(step_ready, timeout, f"the service step on {node}")
+    except BaseException:
+        _stop_launcher_step(record)
+        raise
+
+
+def _stop_launcher_step(component):
+    """Stop the `srun` client that holds a service's step open, if any.
+
+    The step normally ends by itself once its service is gone. A client still
+    running after that is terminated, which makes Slurm cancel the step.
+    """
+    expected = component.get("launcher_identity")
+    if not expected:
+        return
+    pid = int(expected["pid"])
+    for sig in (None, signal.SIGTERM, signal.SIGKILL):
+        if sig is not None and _launcher_matches(expected):
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                return
+        deadline = time.monotonic() + (
+            TERMINATE_TIMEOUT_SECONDS if sig != signal.SIGKILL else 1)
+        while _launcher_matches(expected) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if not _launcher_matches(expected):
+            return
+
+
+def _launcher_matches(expected):
+    pid = int(expected["pid"])
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        pass
+    observed = qfw_process_state.local_process_identity(pid)
+    return qfw_process_state.identities_match(expected, observed)
 
 
 def _group_for_node(node, allocation):
