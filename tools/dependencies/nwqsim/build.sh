@@ -96,6 +96,17 @@ git clone --recursive "${NWQSIM_REPOSITORY}" "${SOURCE_DIR}"
 git -C "${SOURCE_DIR}" checkout --detach "${NWQSIM_REF}"
 git -C "${SOURCE_DIR}" submodule update --init --recursive
 
+apply_patch_file() {
+	local target="$1"
+	local patch_file="$2"
+	patch --directory="${target}" --strip=1 --forward \
+		--input="${patch_file}"
+}
+
+PATCH_ROOT="${SCRIPT_DIR}/patches"
+apply_patch_file "${SOURCE_DIR}" \
+	"${PATCH_ROOT}/common/nwqsim-sv-omp.patch"
+
 cmake_args=(
 	-S "${SOURCE_DIR}"
 	-B "${BUILD_DIR}"

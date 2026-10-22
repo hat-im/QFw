@@ -1,0 +1,69 @@
+diff --git a/include/svsim/sv_omp.hpp b/include/svsim/sv_omp.hpp
+index 9b918da..30a1891 100644
+--- a/include/svsim/sv_omp.hpp
++++ b/include/svsim/sv_omp.hpp
+@@ -57,6 +57,9 @@ namespace NWQSim
+         }
+ 
+     protected:
++        ValType measure_rand = 0;
++        std::vector<ValType> sample_randoms;
++
+         void simulation_kernel(const std::vector<SVGate> &gates) override
+         {
+ #pragma omp parallel
+@@ -267,11 +270,14 @@ namespace NWQSim
+ 
+         void M_GATE(const IdxType qubit) override
+         {
+-            SAFE_FREE_HOST(results);
+-            SAFE_ALOC_HOST(results, sizeof(IdxType));
+-            memset(results, 0, sizeof(IdxType));
+-
+-            auto rand = uni_dist(rng);
++#pragma omp single
++            {
++                SAFE_FREE_HOST(results);
++                SAFE_ALOC_HOST(results, sizeof(IdxType));
++                memset(results, 0, sizeof(IdxType));
++                measure_rand = uni_dist(rng);
++            }
++            const ValType rand = measure_rand;
+             IdxType mask = ((IdxType)1 << qubit);
+ 
+ #pragma omp for schedule(auto)
+@@ -332,15 +338,22 @@ namespace NWQSim
+                 }
+             }
+             BARR;
++#pragma omp single
+             results[0] = rand < prob_of_one ? 1 : 0;
+         }
+ 
+         //============== MA Gate (Measure all qubits in Pauli-Z) ================
+         void MA_GATE(const IdxType repetition) override
+         {
+-            SAFE_FREE_HOST(results);
+-            SAFE_ALOC_HOST(results, sizeof(IdxType) * repetition);
+-            memset(results, 0, sizeof(IdxType) * repetition);
++#pragma omp single
++            {
++                SAFE_FREE_HOST(results);
++                SAFE_ALOC_HOST(results, sizeof(IdxType) * repetition);
++                memset(results, 0, sizeof(IdxType) * repetition);
++                sample_randoms.resize(repetition);
++                for (IdxType i = 0; i < repetition; i++)
++                    sample_randoms[i] = uni_dist(rng);
++            }
+ 
+             IdxType n_size = (IdxType)1 << n_qubits;
+ #pragma omp for schedule(auto)
+@@ -397,7 +410,7 @@ namespace NWQSim
+                 IdxType lo = 0;
+                 IdxType hi = ((IdxType)1 << n_qubits);
+                 IdxType mid;
+-                ValType r = uni_dist(rng);
++                ValType r = sample_randoms[i];
+                 while (hi - lo > 1)
+                 {
+                     mid = lo + (hi - lo) / 2;

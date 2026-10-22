@@ -32,6 +32,9 @@ tools/dependencies/tnqvm/build.sh \
   --rocm auto
 ```
 
+NWQ-Sim applies one patch, `patches/common/nwqsim-sv-omp.patch`, so that its OpenMP
+backend draws measurement random numbers once per run instead of once per thread.
+
 TNQVM applies the compatibility patch set used by both builds, followed by the
 validated CPU or ROCm patch set. Automatic ROCm selection requires `hipcc`,
 HIP headers, and hipBLAS. Use `--rocm on` to require that toolchain or
