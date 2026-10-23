@@ -130,10 +130,8 @@ class QRC(UTIL_QRC):
 		if "num_shots" in info:
 			executable_args.extend(['-shots', info["num_shots"]])
 
-		if "backend" in info:
-			executable_args.extend(['-backend', info["backend"]])
-		else:
-			executable_args.extend(['-backend', 'OPENMP'])
+		sim_backend = info.get("backend") or launch_config.get("sim-backend") or "OPENMP"
+		executable_args.extend(['-backend', str(sim_backend)])
 
 		if "method" in info:
 			executable_args.extend(['-sim', info["method"]])

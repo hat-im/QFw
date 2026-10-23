@@ -543,6 +543,22 @@ also consumes `provider-launch.wrapper`. The packaged `agent-prefix` and
 `provider-launch.type` fields are reserved metadata and do not currently alter
 launch behavior.
 
+The nwqsim entry also accepts the optional `provider-launch.sim-backend`, the
+value passed to `circuit_runner.nwqsim` as `-backend`. When it is absent or
+empty the backend is `OPENMP`; a job that sets `backend` overrides it. The
+packaged `local-gpu` profile is `local` with `sim-backend: NVGPU` and needs an
+NWQ-Sim built with `--cuda on`:
+
+```yaml
+services:
+  - name: nwqsim
+    provider-launch:
+      type: mpi
+      wrapper: null
+      use-dvm: true
+      sim-backend: NVGPU
+```
+
 </details>
 
 <details>
@@ -800,13 +816,14 @@ they do not receive the device-access path or its credential contents.
 The user selects a Python environment and runtime profile. The runtime controls
 service discovery and whether the job starts allocation-owned services.
 
-QFw installs three runtime files:
+QFw installs four runtime files:
 
 | Selection | Installed file | Discovery order | Services started by the job |
 | --- | --- | --- | --- |
 | No profile | `$QFW_SHARE_DIR/config/runtime.yaml` | Site only | None |
 | `--profile local` | `$QFW_SHARE_DIR/config/runtime/local.yaml` | Local only | Local directory and QPM services |
 | `--profile hybrid` | `$QFW_SHARE_DIR/config/runtime/hybrid.yaml` | Local, then site | Local directory and QPM services |
+| `--profile local-gpu` | `$QFW_SHARE_DIR/config/runtime/local-gpu.yaml` | Local only | Same as `local`, with NWQ-Sim on the GPU |
 
 The default runtime file contains:
 
