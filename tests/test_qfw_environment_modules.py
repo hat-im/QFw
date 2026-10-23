@@ -39,6 +39,27 @@ def test_load_for_service_resolves_module_environment(tmp_path):
     assert "LOADEDMODULES" not in base
 
 
+def test_load_for_service_runs_module_output_that_does_not_import_os(tmp_path):
+    module_bin = tmp_path / "module-bin"
+    simulator_bin = tmp_path / "simulator-bin"
+    module_bin.mkdir()
+    simulator_bin.mkdir()
+    _executable(
+        module_bin / "modulecmd",
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"os.environ['PATH'] = "
+        f"'{simulator_bin}:' + os.environ['PATH']\"\n",
+    )
+    _executable(simulator_bin / "circuit_runner.nwqsim", "#!/bin/sh\n")
+
+    resolved = environment_modules.load_for_service({
+        "environment-modules": ["nwqsim"],
+        "required-executables": ["circuit_runner.nwqsim"],
+    }, {"PATH": f"{module_bin}:/usr/bin:/bin"})
+
+    assert resolved["PATH"].startswith(f"{simulator_bin}:")
+
+
 def test_load_for_service_reports_module_failure(tmp_path):
     modulecmd = _executable(
         tmp_path / "modulecmd",
