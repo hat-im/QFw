@@ -284,14 +284,14 @@ def _qdmi_encode(monkeypatch, topology, calibration_set_id, info):
 	_stub_package(monkeypatch, "svc_lib_qpm", "services/svc_lib_qpm")
 	_stub_package(
 		monkeypatch, "svc_lib_qpm.drivers", "services/svc_lib_qpm/drivers")
-	fomac_normalize = _fresh_import(
-		monkeypatch, "svc_lib_qpm.drivers.fomac_normalize")
+	qdmi_normalize = _fresh_import(
+		monkeypatch, "svc_lib_qpm.drivers.qdmi_normalize")
 	qdmi_profiles = _fresh_import(
 		monkeypatch, "svc_lib_qpm.drivers.qdmi_profiles")
 	monkeypatch.setattr(
-		fomac_normalize, "extract_topology", lambda device: topology)
+		qdmi_normalize, "extract_topology", lambda device: topology)
 	monkeypatch.setattr(
-		fomac_normalize, "_calibration_set_id",
+		qdmi_normalize, "_calibration_set_id",
 		lambda device, slot: calibration_set_id)
 	driver = types.SimpleNamespace(
 		_descriptor={}, _serialize_program=lambda circuit: circuit)
