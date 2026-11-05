@@ -307,7 +307,7 @@ class QFwBackend(BackendV2):
 		log(f"QFw backend: {reason}; using the generic "
 		    f"{self._num_qubits}-qubit QFw target")
 		self._target_source = f"generic: {reason}"
-		return build_qfw_target(self._num_qubits)
+		return build_qfw_target(self._num_qubits, self.published("instructions"))
 
 	def _kind_without_a_device(self):
 		return (TARGET_FALLBACK if self.published("hardware")
