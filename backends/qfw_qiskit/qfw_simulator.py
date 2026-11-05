@@ -116,7 +116,6 @@ def _compiler_name(compiler):
 class QFwBackend(BackendV2):
 	BACKEND_NAME = "QFw Backend"
 	BACKEND_VERSION = "1.0"
-	COMPLETION_TIMEOUT_SEC = 200
 
 	def __init__(self, betype=-1, capability=-1, target=None, properties=None,
 				 num_qubits=QFW_NUM_QUBITS, lookup_timeout=None,
