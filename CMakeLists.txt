@@ -141,6 +141,32 @@ if(QFW_LIBFABRIC_LIB_DIRS_SHELL)
 		"QFw activate will add libfabric: ${QFW_LIBFABRIC_LIB_DIRS_SHELL}")
 endif()
 
+# Where the bundled DEFw finds the Python library, for qfw-activate to put on
+# LD_LIBRARY_PATH, for the same reason as libfabric above: defwp links
+# libpython and installs with an RPATH of $ORIGIN/../lib alone. A distribution
+# Python keeps its library in a system directory and needs nothing. A
+# relocatable one (python-build-standalone, which uv installs, or conda) keeps
+# it under its own prefix, and a site service started over ssh exits 127 with
+# "libpython3.12.so.1.0: cannot open shared object file".
+#
+# Empty unless DEFw is built here against a Python library outside the system
+# directories.
+set(QFW_PYTHON_LIB_DIRS_SHELL "")
+if(QFW_BUILD_BUNDLED_DEFW)
+	find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Embed)
+	foreach(qfw_python_dir IN LISTS Python3_LIBRARY_DIRS)
+		if(qfw_python_dir MATCHES "^/(usr/)?lib(32|64|x32)?/?$")
+			continue()
+		endif()
+		string(APPEND QFW_PYTHON_LIB_DIRS_SHELL " \"${qfw_python_dir}\"")
+	endforeach()
+endif()
+string(STRIP "${QFW_PYTHON_LIB_DIRS_SHELL}" QFW_PYTHON_LIB_DIRS_SHELL)
+if(QFW_PYTHON_LIB_DIRS_SHELL)
+	message(STATUS
+		"QFw activate will add the Python library: ${QFW_PYTHON_LIB_DIRS_SHELL}")
+endif()
+
 configure_file(
 	cmake/qfw-activate.in
 	"${QFW_GENERATED_BIN_DIR}/qfw-activate"
