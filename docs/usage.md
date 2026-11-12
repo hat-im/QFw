@@ -632,6 +632,8 @@ The `aer` service reads its own `aer` block:
 | `mps-max-bond-dimension` | Aer's `matrix_product_state_max_bond_dimension`, with `method: matrix_product_state`. | Aer's |
 | `mps-truncation-threshold` | Aer's `matrix_product_state_truncation_threshold`, with `method: matrix_product_state`. | Aer's |
 | `mps-log-data` | Aer's `mps_log_data`, with `method: matrix_product_state`. Each result then carries Aer's `MPS_log_data`, which records the discarded weight and bond dimensions. | `false` |
+| `mps-omp-threads` | Aer's `mps_omp_threads`, the OpenMP threads for MPS gates, with `method: matrix_product_state`. | `1` |
+| `mps-lapack` | Aer's `mps_lapack`, which computes MPS SVDs with LAPACK, with `method: matrix_product_state`. | `false` |
 
 `device-id` names a `qiskit-ibm-runtime` `fake_provider` class, such as
 `FakeFez`, or a JSON file `{"configuration": ..., "properties": ...}` of raw IBM
