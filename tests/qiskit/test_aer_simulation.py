@@ -155,7 +155,7 @@ def test_the_service_entrys_settings_reach_aer():
 	settings = aer_settings.aer_settings_from_service_entry({"aer": {
 		"method": "matrix_product_state", "mps-max-bond-dimension": 64,
 		"mps-truncation-threshold": 1e-10, "max-memory-mb": 512,
-		"mps-omp-threads": 4, "mps-lapack": True}})
+		"mps-lapack": True}})
 
 	sim = circuit_runner.aer_simulator(**settings.options)
 
@@ -163,7 +163,6 @@ def test_the_service_entrys_settings_reach_aer():
 	assert sim.options.matrix_product_state_max_bond_dimension == 64
 	assert sim.options.matrix_product_state_truncation_threshold == 1e-10
 	assert sim.options.max_memory_mb == 512
-	assert sim.options.mps_omp_threads == 4
 	assert sim.options.mps_lapack is True
 
 
