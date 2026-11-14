@@ -1130,6 +1130,15 @@ class QPMTargetController:
 					"request_id": admission_request.get("request_id"),
 					"reason": "caller-selected-reservation-id",
 				}
+			over_limit = self._task_class_over_device_limit(
+				admission_request["task_class"])
+			if over_limit:
+				return {
+					"status": "rejected",
+					"request_id": admission_request.get("request_id"),
+					"reason": "request-too-large",
+					"message": over_limit,
+				}
 			if self.reservation_sequence is not None:
 				admission_request["reservation_id"] = (
 					self.reservation_sequence.allocate(
@@ -3394,6 +3403,17 @@ class QPMTargetController:
 		binding.setdefault("user_id", user_external)
 		binding.setdefault("secret_material", "not-stored")
 		return _drop_none(binding)
+
+	def _task_class_over_device_limit(self, task_class):
+		profile = self.device_profile or {}
+		for key, limit_name in (
+				("shots", "max_shots"), ("qubit_count", "max_qubits")):
+			limit = profile.get(limit_name) or 0
+			if limit and task_class[key] > limit:
+				return (
+					f"{key} {task_class[key]} exceeds the QPM's "
+					f"{limit_name} {limit}")
+		return None
 
 	def _admission_task_class(self, request):
 		task_class = dict(request.get("task_class", {}))
