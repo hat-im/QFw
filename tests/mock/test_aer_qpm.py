@@ -1,8 +1,10 @@
 import json
+from pathlib import Path
 import shlex
 import types
 
 import pytest
+import yaml
 
 from api_qpm_common import QPMType
 from defw_exception import DEFwError, DEFwExecutionError
@@ -261,3 +263,20 @@ def test_the_runner_counts_are_the_result():
 	) == {"counts": {"00": 60, "11": 40}, "diagnostics": {"method": "mps"}}
 	with pytest.raises(DEFwError):
 		qrc.parse_result(b"Traceback")
+
+
+def test_the_shipped_local_manifest_offers_aer_on_the_cpu_and_the_gpu():
+	manifest = yaml.safe_load((
+		Path(__file__).resolve().parents[2] / "share" / "qfw" / "config" /
+		"services" / "local-services.yaml").read_text(encoding="utf-8"))
+	entries = {entry["name"]: entry for entry in manifest["services"]}
+
+	cpu = aer_settings_from_service_entry(entries["aer"])
+	gpu = aer_settings_from_service_entry(entries["aer-gpu"])
+
+	assert (cpu.device, cpu.method) == ("CPU", "automatic")
+	assert (gpu.device, gpu.method, gpu.num_qubits) == (
+		"GPU", "statevector", 30)
+	assert entries["aer-gpu"]["module"] == entries["aer"]["module"]
+	assert entries["aer-gpu"]["provider-launch"] == (
+		entries["aer"]["provider-launch"])
