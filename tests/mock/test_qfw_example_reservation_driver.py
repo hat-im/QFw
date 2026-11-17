@@ -73,3 +73,11 @@ def test_resolve_qpm_selects_by_target_device(monkeypatch):
 
 	driver.resolve_qpm("shim", 1)
 	assert "selector_resource" not in calls[-1]
+
+
+def test_a_pbs_job_is_the_allocation(monkeypatch):
+	for name in ("SLURM_JOB_ID", "SLURM_JOBID", "QFW_ALLOCATION_ID"):
+		monkeypatch.delenv(name, raising=False)
+	monkeypatch.setenv("PBS_JOBID", "8123.aurora-pbs-0001")
+
+	assert driver.allocation_id() == "8123.aurora-pbs-0001"
