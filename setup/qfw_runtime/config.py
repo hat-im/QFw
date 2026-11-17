@@ -173,6 +173,27 @@ def qfw_run_base_dir():
     return Path(value).expanduser().resolve()
 
 
+def is_this_node(name):
+    return _short_hostname(name) == _short_hostname(socket.gethostname())
+
+
+def _short_hostname(name):
+    return str(name).split(".", 1)[0]
+
+
+def pbs_nodelist(environ=None):
+    environ = os.environ if environ is None else environ
+    nodefile = environ["PBS_NODEFILE"]
+    nodes = list(dict.fromkeys(
+        Path(nodefile).read_text(encoding="utf-8").split()))
+    here = [node for node in nodes if is_this_node(node)]
+    if not here:
+        raise ValueError(
+            f"this node, {socket.gethostname()}, is not in PBS_NODEFILE "
+            f"{nodefile}; run QFw from inside the PBS job")
+    return ",".join([*here, *(node for node in nodes if node not in here)])
+
+
 def load_yaml(path):
     path = Path(path).expanduser()
     with path.open("r", encoding="utf-8") as stream:

@@ -562,6 +562,8 @@ def _allocation_context_from_env(env=None):
             mode = "heterogeneous"
         elif env.get("SLURM_JOB_NODELIST"):
             mode = "slurm"
+        elif env.get("PBS_NODEFILE"):
+            mode = "pbs"
         else:
             mode = "local"
     if mode == "heterogeneous" and (not group0_value or not group1_value):
@@ -569,6 +571,10 @@ def _allocation_context_from_env(env=None):
         group1_value = env.get("SLURM_JOB_NODELIST_HET_GROUP_1", group1_value)
     elif mode == "slurm" and (not group0_value or not group1_value):
         nodelist = env.get("SLURM_JOB_NODELIST", socket.gethostname())
+        group0_value = group0_value or nodelist
+        group1_value = group1_value or nodelist
+    elif mode == "pbs" and (not group0_value or not group1_value):
+        nodelist = qfw_config.pbs_nodelist(env)
         group0_value = group0_value or nodelist
         group1_value = group1_value or nodelist
     elif mode == "local":
