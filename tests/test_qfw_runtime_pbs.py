@@ -1,3 +1,4 @@
+import json
 import socket
 import subprocess
 import sys
@@ -162,3 +163,54 @@ def test_a_pbs_dvm_spans_every_node_of_the_job(tmp_path, pbs_job, monkeypatch):
         "--report-pid", str(uri_path.with_name("pid")),
         "--keepalive", "0", "--daemonize",
     ]]
+
+
+def test_a_pbs_run_is_prepared_in_its_pbs_job(tmp_path, pbs_job):
+    pbs_job(THIS_NODE)
+    site = {
+        "install": {
+            "qfw-prefix": str(tmp_path / "qfw"),
+            "defw-prefix": str(tmp_path / "defw"),
+        },
+        "directory-service": {
+            "name": "qfw-site-dirsvc",
+            "endpoint": "pbs-head:8090",
+        },
+    }
+
+    state = qfw_config.prepare_run_state(
+        tmp_path / "site.yaml", tmp_path / "runtime.yaml", site, {},
+        run_id="job-run", run_dir=tmp_path / "run", dry_run=True)
+
+    assert state["pbs_job_id"] == "8123.aurora-pbs-0001"
+
+
+def _run_of(base, name, pbs_job_id):
+    state_dir = base / name / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "runtime-state.json").write_text(json.dumps({
+        "run_dir": str(base / name), "pbs_job_id": pbs_job_id,
+    }), encoding="utf-8")
+    return (base / name).resolve()
+
+
+@pytest.mark.parametrize("inherited_job, uses_inherited", [
+    ("8123.aurora-pbs-0001", True),
+    ("7000.aurora-pbs-0001", False),
+])
+def test_run_discovery_keeps_to_the_runs_of_this_pbs_job(
+        tmp_path, pbs_job, monkeypatch, capsys, inherited_job,
+        uses_inherited):
+    pbs_job(THIS_NODE)
+    base = tmp_path / "runs"
+    inherited = _run_of(base, "inherited", inherited_job)
+    own = _run_of(base, "own", "8123.aurora-pbs-0001")
+    (base / "current").write_text("own\n", encoding="utf-8")
+    monkeypatch.setenv("QFW_RUN_BASE_DIR", str(base))
+    monkeypatch.setenv("QFW_RUN_TMP_PATH", str(inherited))
+
+    found = qfw_config.current_run_dir().resolve()
+
+    assert found == (inherited if uses_inherited else own)
+    if not uses_inherited:
+        assert f"PBS job {inherited_job}" in capsys.readouterr().err
