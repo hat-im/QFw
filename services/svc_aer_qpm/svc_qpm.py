@@ -21,7 +21,10 @@ def available_devices():
 
 class QPM(UTIL_QPM):
 	def __init__(self, start=True):
-		self.settings = aer_settings_from_service_entry(this_service_entry())
+		from . import accelerator
+		entry = this_service_entry()
+		self.settings = aer_settings_from_service_entry(entry)
+		self.accelerator = accelerator(entry)
 		self.device = os.environ.get(DEVICE_ENV, "").strip() or None
 		if self.settings.mode == "noisy" and not self.device:
 			raise DEFwExecutionError(

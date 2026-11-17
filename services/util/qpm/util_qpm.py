@@ -145,6 +145,8 @@ def _add_qpm_qubit_resource(resources, provider, num_qubits):
 
 
 class UTIL_QPM:
+	accelerator = None
+
 	def __init__(self, qrc, max_ppn=MAX_PPN, start=True, target_id=None,
 		     admission_threading_mode=None, scheduler_threading_mode=None,
 		     controller_serialization_mode=None,
@@ -1194,7 +1196,8 @@ class UTIL_QPM:
 			initialized=qpm_initialized,
 			provider_ready=self.qrc is not None,
 			dvm_ready=(os.path.isfile(dvm_uri_path)
-				   if dvm_uri_path else None))
+				   if dvm_uri_path else None),
+			accelerator=self.accelerator)
 
 	def shutdown(self, token=None, mode="graceful", timeout_s=None,
 		     reason=None):

@@ -409,7 +409,7 @@ class QPMTargetController:
 			}
 
 	def get_service_summary(self, initialized=False, provider_ready=False,
-				    dvm_ready=None):
+				    dvm_ready=None, accelerator=None):
 		with self.lock:
 			ready = bool(
 				initialized and provider_ready and
@@ -434,6 +434,7 @@ class QPMTargetController:
 					self.service_state == "running"),
 				"provider_ready": bool(provider_ready),
 				"dvm_ready": dvm_ready,
+				"accelerator": accelerator,
 				"maintenance": self.service_state != "running",
 				"active_reservation_count": active_reservations,
 				"active_task_count": active_tasks,
