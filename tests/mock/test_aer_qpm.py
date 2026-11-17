@@ -115,7 +115,7 @@ def test_the_entrys_names_become_aers_options():
 		"mps_log_data": True}
 
 
-@pytest.mark.parametrize("device, accelerator", [("GPU", "gpu"), ("CPU", None)])
+@pytest.mark.parametrize("device, accelerator", [("GPU", "gpu"), ("CPU", "cpu")])
 def test_the_service_summary_names_the_device_it_runs_on(
 		service, device, accelerator):
 	service(mode="ideal", device=device, **{"num-qubits": 20})
