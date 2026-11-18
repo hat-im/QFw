@@ -182,6 +182,7 @@ def qfw_srun(argv):
     parser.add_argument("--nodelist")
     parser.add_argument("--het-group")
     parser.add_argument("--exclusive", action="store_true")
+    parser.add_argument("--gres")
     parser.add_argument("application", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if not args.application:
@@ -200,6 +201,7 @@ def qfw_srun(argv):
             "nodelist": args.nodelist,
             "het_group": args.het_group,
             "exclusive": args.exclusive,
+            "gres": args.gres,
         },
     )
     return subprocess.run(command, env=env).returncode
@@ -613,6 +615,8 @@ def _application_srun_options(launch_options):
         srun.extend(["--ntasks", str(launch_options["ntasks"])])
     if launch_options.get("nodelist"):
         srun.extend(["--nodelist", str(launch_options["nodelist"])])
+    if launch_options.get("gres"):
+        srun.append(f"--gres={launch_options['gres']}")
     if launch_options.get("exclusive"):
         srun.append("--exclusive")
     else:
