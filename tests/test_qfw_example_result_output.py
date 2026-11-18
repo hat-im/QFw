@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -344,3 +345,43 @@ def test_embedded_structured_emitters_request_pretty_json():
             for chunk in chunks:
                 arguments = chunk.split("sort_keys=True", 1)[0]
                 assert "indent=2" in arguments
+
+
+def test_slurm_driver_starts_every_step_without_the_jobs_gpus(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    reservation = format_console_record("QFW_EXAMPLE_RESERVATION", {
+        "kind": "reserve",
+        "decision": {"reservation_id": "reservation-1"},
+        "service_id": "service-1",
+        "ownership": "driver",
+    })
+    qfw_srun = bin_dir / "qfw-srun"
+    qfw_srun.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$*\" >> {calls}\n"
+        "case \" $* \" in\n"
+        f"*' reserve '*) cat <<'RECORD'\n{reservation}\nRECORD\n;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    qfw_srun.chmod(0o755)
+    for name in ("qfw-setup", "qfw-teardown"):
+        (bin_dir / name).symlink_to("/usr/bin/true")
+
+    subprocess.run(
+        ["bash", "examples/qfw_slurm_driver.sh", "--backend", "aer",
+         "--example", "timing", "--qubits", "4",
+         "--run-dir", str(tmp_path / "run"), "--", "application"],
+        cwd=REPOSITORY_ROOT,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    steps = calls.read_text(encoding="utf-8").splitlines()
+    assert [step.split()[-1] for step in steps][1] == "application"
+    assert len(steps) == 3
+    assert all("--gres none" in step for step in steps)
