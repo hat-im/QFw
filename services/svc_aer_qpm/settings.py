@@ -8,15 +8,17 @@ AER_OPTIONS = {
 	"method": "method",
 	"device": "device",
 	"max-memory-mb": "max_memory_mb",
+	"max-parallel-threads": "max_parallel_threads",
 	"target-gpus": "target_gpus",
 	"mps-max-bond-dimension": "matrix_product_state_max_bond_dimension",
 	"mps-truncation-threshold": "matrix_product_state_truncation_threshold",
 	"mps-log-data": "mps_log_data",
 	"mps-lapack": "mps_lapack",
+	"mps-omp-threads": "mps_omp_threads",
 }
 PUBLISHED_MPS_KEYS = (
 	"mps-max-bond-dimension", "mps-truncation-threshold", "mps-log-data")
-MPS_KEYS = (*PUBLISHED_MPS_KEYS, "mps-lapack")
+MPS_KEYS = (*PUBLISHED_MPS_KEYS, "mps-lapack", "mps-omp-threads")
 PUBLISHED_KEYS = ("method", "device", *PUBLISHED_MPS_KEYS)
 
 
