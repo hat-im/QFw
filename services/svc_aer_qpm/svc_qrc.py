@@ -3,7 +3,8 @@ import os
 import sys
 
 from defw_exception import DEFwError, DEFwExecutionError
-from util.mpi import build_mpi_command_string, mpi_launch_config
+from util.mpi import (
+	build_mpi_command_string, mpi_launch_config, this_service_entry)
 from util.qpm.util_qrc import UTIL_QRC
 
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +39,9 @@ class QRC(UTIL_QRC):
 		info = circ.info
 		aer = info["aer"]
 		dvm = os.environ.get("QFW_DVM_URI_PATH", "").strip()
+		if not (this_service_entry().get("provider-launch") or {}).get(
+				"use-dvm", True):
+			dvm = ""
 		if dvm and not os.path.exists(dvm):
 			raise DEFwExecutionError(f"dvm-uri {dvm} doesn't exist")
 

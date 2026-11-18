@@ -257,3 +257,29 @@ def test_the_runner_counts_are_the_result():
 	) == {"counts": {"00": 60, "11": 40}, "diagnostics": {"method": "mps"}}
 	with pytest.raises(DEFwError):
 		qrc.parse_result(b"Traceback")
+
+
+def _set_use_dvm(tmp_path, use_dvm):
+	path = tmp_path / "services.yaml"
+	config = json.loads(path.read_text())
+	config["services"][0]["provider-launch"] = {"type": "mpi", "use-dvm": use_dvm}
+	path.write_text(json.dumps(config))
+
+
+def test_the_runner_runs_in_the_dvm(service, monkeypatch, tmp_path):
+	circuit = _circuit(service, monkeypatch)
+	dvm = tmp_path / "dvm-uri"
+	dvm.write_text("prte-uri")
+	monkeypatch.setenv("QFW_DVM_URI_PATH", str(dvm))
+	_set_use_dvm(tmp_path, True)
+
+	assert f"--dvm file:{dvm}" in QRC(start=False).form_cmd(circuit, "c.qasm")
+
+
+def test_an_entry_without_the_dvm_runs_the_runner_under_mpirun_alone(
+		service, monkeypatch, tmp_path):
+	circuit = _circuit(service, monkeypatch)
+	monkeypatch.setenv("QFW_DVM_URI_PATH", str(tmp_path / "no-dvm-started"))
+	_set_use_dvm(tmp_path, False)
+
+	assert "--dvm" not in QRC(start=False).form_cmd(circuit, "c.qasm")
