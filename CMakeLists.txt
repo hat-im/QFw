@@ -22,6 +22,24 @@ include(ExternalProject)
 add_subdirectory(man)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+if(Python3_INCLUDE_DIR)
+	set(QFW_PYTHON_INCLUDE_DIR "${Python3_INCLUDE_DIR}")
+else()
+	execute_process(
+		COMMAND "${Python3_EXECUTABLE}" -c
+			"import sysconfig; print(sysconfig.get_path('include'))"
+		OUTPUT_VARIABLE QFW_PYTHON_INCLUDE_DIR
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+		RESULT_VARIABLE qfw_python_include_result)
+	if(qfw_python_include_result OR NOT EXISTS "${QFW_PYTHON_INCLUDE_DIR}/Python.h")
+		set(QFW_PYTHON_INCLUDE_DIR "")
+	endif()
+endif()
+set(QFW_EXTERNAL_PYTHON_ARGS "-DPython3_EXECUTABLE=${Python3_EXECUTABLE}")
+if(QFW_PYTHON_INCLUDE_DIR)
+	list(APPEND QFW_EXTERNAL_PYTHON_ARGS
+		"-DPython3_INCLUDE_DIR=${QFW_PYTHON_INCLUDE_DIR}")
+endif()
 
 option(QFW_BUILD_BUNDLED_DEFW
 	"Build and install the bundled DEFw tree with QFw" OFF)
@@ -78,7 +96,7 @@ function(qfw_add_external_cmake_package target_name source_dir)
 			"-DCMAKE_INSTALL_MANDIR=${CMAKE_INSTALL_MANDIR}"
 			"-DCMAKE_INSTALL_DOCDIR=${CMAKE_INSTALL_DOCDIR}"
 			"-DCMAKE_PREFIX_PATH=<INSTALL_DIR>"
-			"-DPython3_EXECUTABLE=${Python3_EXECUTABLE}"
+			${QFW_EXTERNAL_PYTHON_ARGS}
 			${ARGN})
 endfunction()
 
