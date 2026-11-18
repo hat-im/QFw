@@ -5,6 +5,7 @@ import pytest
 
 from defw_exception import DEFwExecutionError
 import svc_nwqsim_qpm.svc_qrc as svc_qrc
+from svc_nwqsim_qpm.svc_qpm import QPM
 from svc_nwqsim_qpm.settings import check_backend_is_compiled, nwqsim_backend
 from util import service_listing
 from util.qpm.util_qrc import UTIL_QRC
@@ -118,3 +119,13 @@ def test_a_started_runner_checks_its_backend_against_the_build(
 	svc_qrc.QRC(start=True)
 
 	assert checked == ["NVGPU"]
+
+
+@pytest.mark.parametrize("backend, accelerator", [
+	("OPENMP", "cpu"), ("NVGPU", "gpu")])
+def test_the_service_summary_names_the_device_its_backend_runs_on(
+		service, monkeypatch, backend, accelerator):
+	monkeypatch.setenv("QFW_QPM_ASSIGNED_HOSTS", "localhost:1")
+	service(backend=backend)
+
+	assert QPM(start=False).get_service_summary()["accelerator"] == accelerator
