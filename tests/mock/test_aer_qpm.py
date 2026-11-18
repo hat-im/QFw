@@ -286,8 +286,8 @@ def test_the_shipped_local_manifest_offers_aer_on_the_cpu_and_the_gpu():
 	assert (gpu.device, gpu.method, gpu.num_qubits) == (
 		"GPU", "statevector", 30)
 	assert entries["aer-gpu"]["module"] == entries["aer"]["module"]
-	assert entries["aer-gpu"]["provider-launch"] == (
-		entries["aer"]["provider-launch"])
+	assert entries["aer-gpu"]["provider-launch"] == {
+		"type": "mpi", "use-dvm": False}
 
 def _set_use_dvm(tmp_path, use_dvm):
 	path = tmp_path / "services.yaml"

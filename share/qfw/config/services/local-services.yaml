@@ -72,6 +72,7 @@ services:
       num-qubits: 30
     provider-launch:
       type: mpi
+      use-dvm: false
 
   - name: fake-iqm
     credential-mode: no-secret
