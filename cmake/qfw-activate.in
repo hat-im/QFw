@@ -205,6 +205,16 @@ _qfw_activate_requested_venv() {
 		echo "qfw-activate: switching virtual environment from ${VIRTUAL_ENV} to ${resolved_venv}" >&2
 	fi
 	if [[ "${active_venv}" != "${resolved_venv}" ]]; then
+		if [[ -n "${active_venv}" && -n "${_OLD_VIRTUAL_PATH+x}" ]]; then
+			local path_entry caller_path=""
+			local -a path_entries
+			IFS=: read -r -a path_entries <<< "${PATH}"
+			for path_entry in "${path_entries[@]}"; do
+				[[ "${path_entry}" == "${VIRTUAL_ENV}/bin" ]] ||
+					caller_path="${caller_path:+${caller_path}:}${path_entry}"
+			done
+			_OLD_VIRTUAL_PATH="${caller_path}"
+		fi
 		# shellcheck source=/dev/null
 		source "${resolved_venv}/bin/activate" || return $?
 		_QFW_VENV_ACTIVATED=1
