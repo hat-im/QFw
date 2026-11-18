@@ -660,12 +660,17 @@ The `aer` service reads its own `aer` block:
 | `device` | `CPU` or `GPU`, as Aer's `device` option. | `CPU` |
 | `method` | An Aer simulation method. | `automatic` |
 | `max-memory-mb` | Aer's memory limit; 0 lets Aer decide. | `0` |
+| `max-parallel-threads` | Aer's `max_parallel_threads`. | the runner's cores with `method: matrix_product_state`, else Aer's |
 | `target-gpus` | The GPU ids to use, with `device: GPU`. | all |
 | `num-qubits` | The width when there is no `device-id`. | none |
 | `mps-max-bond-dimension` | Aer's `matrix_product_state_max_bond_dimension`, with `method: matrix_product_state`. | Aer's |
 | `mps-truncation-threshold` | Aer's `matrix_product_state_truncation_threshold`, with `method: matrix_product_state`. | Aer's |
 | `mps-log-data` | Aer's `mps_log_data`, with `method: matrix_product_state`. Each result then carries Aer's `MPS_log_data`, which records the discarded weight and bond dimensions. | `false` |
 | `mps-lapack` | Aer's `mps_lapack`, which computes MPS SVDs with LAPACK, with `method: matrix_product_state`. Aer checks each SVD, and one LAPACK gets wrong fails the circuit with `Wrong SVD calculations`, as the OpenBLAS 0.3.3 in the PyPI wheels has done. | `false` |
+| `mps-omp-threads` | Aer's `mps_omp_threads`, the OpenMP threads of its MPS simulation, with `method: matrix_product_state`. Aer's own default is 1. | the runner's cores |
+
+The runner's cores are `OMP_NUM_THREADS` when it is set, else the CPUs the
+runner may run on.
 
 `device-id` names a `qiskit-ibm-runtime` `fake_provider` class, such as
 `FakeFez`, or a JSON file `{"configuration": ..., "properties": ...}` of raw IBM

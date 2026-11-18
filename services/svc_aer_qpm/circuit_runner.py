@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 import traceback
 
@@ -12,8 +13,24 @@ from qiskit_aer import AerSimulator
 
 from device import device_backend
 
+MPS = "matrix_product_state"
+THREAD_COUNT_ENV = "OMP_NUM_THREADS"
+
+
+def available_threads():
+	threads = os.environ.get(THREAD_COUNT_ENV, "").strip()
+	if threads.isdigit() and int(threads) > 0:
+		return int(threads)
+	if hasattr(os, "sched_getaffinity"):
+		return len(os.sched_getaffinity(0))
+	return os.cpu_count() or 1
+
 
 def aer_simulator(mode="ideal", device_id=None, **options):
+	if options.get("method") == MPS:
+		threads = available_threads()
+		options.setdefault("mps_omp_threads", threads)
+		options.setdefault("max_parallel_threads", threads)
 	if mode == "noisy":
 		return AerSimulator.from_backend(device_backend(device_id), **options)
 	return AerSimulator(**options)

@@ -240,3 +240,45 @@ def test_a_records_file_samples_like_its_fake_backend(tmp_path, bell_on_fez):
 	from_fake = circuit_runner.sample_counts(qasm, SHOTS, seed=9, **NOISY_FEZ)
 
 	assert from_file == from_fake
+
+
+def test_an_mps_simulator_threads_on_the_runners_cores(monkeypatch):
+	monkeypatch.setenv("OMP_NUM_THREADS", "6")
+
+	sim = circuit_runner.aer_simulator(method="matrix_product_state")
+
+	assert sim.options.mps_omp_threads == 6
+	assert sim.options.max_parallel_threads == 6
+
+
+def test_an_mps_simulator_without_a_thread_count_uses_the_cpus_it_may_run_on(
+		monkeypatch):
+	monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+	monkeypatch.setattr(circuit_runner.os, "sched_getaffinity",
+		lambda pid: {0, 1, 2}, raising=False)
+
+	sim = circuit_runner.aer_simulator(method="matrix_product_state")
+
+	assert sim.options.mps_omp_threads == 3
+
+
+def test_the_service_entrys_thread_counts_override_the_runners_cores(
+		monkeypatch):
+	monkeypatch.setenv("OMP_NUM_THREADS", "6")
+	settings = aer_settings.aer_settings_from_service_entry({"aer": {
+		"method": "matrix_product_state", "mps-omp-threads": 2,
+		"max-parallel-threads": 4}})
+
+	sim = circuit_runner.aer_simulator(**settings.options)
+
+	assert sim.options.mps_omp_threads == 2
+	assert sim.options.max_parallel_threads == 4
+
+
+def test_a_statevector_simulator_keeps_aers_thread_defaults(monkeypatch):
+	monkeypatch.setenv("OMP_NUM_THREADS", "6")
+
+	sim = circuit_runner.aer_simulator(method="statevector")
+
+	assert sim.options.mps_omp_threads == 1
+	assert sim.options.max_parallel_threads is None
