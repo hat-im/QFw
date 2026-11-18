@@ -548,7 +548,10 @@ execute_process(
 			test \"\${PS1}\" = '(fake-venv) original> '
 			test \"\${VIRTUAL_ENV}\" = '${qfw_activation_venv}'
 
+			export PATH=\"${qfw_run_base}/caller-bin:\${PATH}\"
 			source '${QFW_INSTALL_PREFIX}/bin/qfw-activate' --venv '${qfw_switch_venv}' 2> '${qfw_run_base}/qfw-activate-prompt-switch.err'
+			[[ \":\${PATH}:\" == *':${qfw_run_base}/caller-bin:'* ]]
+			[[ \":\${PATH}:\" != *':${qfw_activation_venv}/bin:'* ]]
 			test \"\${PS1}\" = '(qfw) original> '
 			test -z \"\${_OLD_VIRTUAL_PS1+x}\"
 			test \"\${VIRTUAL_ENV}\" = '${qfw_switch_venv}'
@@ -557,6 +560,7 @@ execute_process(
 			test \"\${PS1}\" = '(fake-venv) original> '
 			test \"\${VIRTUAL_ENV}\" = '${qfw_activation_venv}'
 			test \"\$(command -v python)\" = '${qfw_activation_venv}/bin/python'
+			[[ \":\${PATH}:\" == *':${qfw_run_base}/caller-bin:'* ]]
 			deactivate
 			test \"\${PS1}\" = 'original> '
 			test -z \"\${VIRTUAL_ENV+x}\"
