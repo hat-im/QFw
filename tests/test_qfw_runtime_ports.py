@@ -910,6 +910,7 @@ def test_a_process_that_exits_during_startup_names_its_stderr(tmp_path):
 @pytest.mark.parametrize("launch_options, expected", [
     ({}, ["srun", "--overlap", "app"]),
     ({"exclusive": True}, ["srun", "--exclusive", "app"]),
+    ({"gres": "none"}, ["srun", "--gres=none", "--overlap", "app"]),
 ])
 def test_an_application_step_overlaps_the_held_service_steps(
         launch_options, expected):

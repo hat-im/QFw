@@ -1227,6 +1227,64 @@ def test_a_dvm_held_in_a_step_does_not_watch_its_stdin(tmp_path, monkeypatch):
     assert "prte" in step.launch
     assert "--keepalive" not in step.launch
     assert "--daemonize" not in step.launch
+    assert "--gres=none" not in step.launch
+
+
+@pytest.mark.parametrize("allocation, node", [
+    (SLURM_ALLOCATION, "qpm-a"), (HET_ALLOCATION, "sim-a")])
+def test_a_control_step_leaves_the_jobs_devices_to_the_services(
+        allocation, node):
+    launch = service_plane._node_launch(node, ["probe"], allocation)
+
+    assert "--gres=none" in launch[:launch.index("probe")]
+
+
+@pytest.mark.parametrize("allocation, node", [
+    (SLURM_ALLOCATION, "qpm-a"), (HET_ALLOCATION, "sim-a")])
+def test_a_step_that_holds_devices_keeps_the_jobs_gres(allocation, node):
+    launch = service_plane._node_launch(
+        node, ["service"], allocation, holds_devices=True)
+
+    assert not [item for item in launch if item.startswith("--gres")]
+
+
+def test_a_qpm_step_holds_the_jobs_devices(tmp_path, monkeypatch):
+    site, _manifest = write_site_configuration(tmp_path, [
+        ("iqm-test", "svc_iqm_qpm", "remote-api"),
+    ])
+    runtime = tmp_path / "site-runtime.yaml"
+    runtime.write_text(
+        "resolver:\n  scope-order:\n    - site\n", encoding="utf-8")
+    connection_file = tmp_path / "directory-service.json"
+    connection_file.write_text(json.dumps({
+        "schema": "qfw-directory-service-v1",
+        "instance_id": "directory-1",
+        "name": "test-dirsvc",
+        "endpoint": f"{socket.gethostname()}:18090",
+        "ready": True,
+    }) + "\n", encoding="utf-8")
+    launched = []
+
+    def launch(record, node, command, *args, holds_devices=False):
+        launched.append(holds_devices)
+        pid_file = Path(command[command.index("--pid-file") + 1])
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text("2001\n", encoding="utf-8")
+        Path(command[command.index("--ready-file") + 1]).write_text(
+            '{"ready": true}\n', encoding="utf-8")
+
+    monkeypatch.setattr(service_plane, "_launch", launch)
+    monkeypatch.setattr(
+        service_plane, "_read_process_identity",
+        lambda pid, *_args: process_identity(pid))
+
+    service_plane.start(parse_role_start_args(
+        "qpm", "--run-dir", str(tmp_path / "live-run"),
+        "--site-config", str(site), "--runtime-config", str(runtime),
+        "--service-id", "iqm-test",
+        "--directory-service-info", str(connection_file)))
+
+    assert launched == [True]
 
 
 def test_qpm_start_composes_private_process_launcher(tmp_path, monkeypatch):

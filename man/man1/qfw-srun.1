@@ -50,6 +50,14 @@ Restrict the generated Slurm launch to these hosts.
 .BI --het-group " number"
 Select an explicit heterogeneous group. Group 0 is the default.
 .TP
+.BI --gres " spec"
+Pass
+.BI --gres= spec
+to the generated Slurm launch.
+.B none
+leaves the job's GPUs to the services, which a step needs before Slurm 21.08
+to start while a GPU service runs.
+.TP
 .B --exclusive
 Request an exclusive Slurm step in place of
 .BR --overlap .

@@ -466,7 +466,7 @@ if [[ -n "${run_dir}" ]]; then
 	qfw_srun_base+=(--run-dir "${run_dir}")
 fi
 
-qfw_srun_control=(${qfw_srun_base[@]+"${qfw_srun_base[@]}"} --nodes 1 --ntasks 1)
+qfw_srun_control=(${qfw_srun_base[@]+"${qfw_srun_base[@]}"} --nodes 1 --ntasks 1 --gres none)
 if [[ -n "${nodelist}" ]]; then
 	qfw_srun_control+=(--nodelist "${nodelist}")
 fi
