@@ -207,7 +207,7 @@ print(ownership)
 }
 
 qfw_slurm_default_allocation_id() {
-	for name in SLURM_JOB_ID SLURM_JOBID QFW_ALLOCATION_ID; do
+	for name in SLURM_JOB_ID SLURM_JOBID PBS_JOBID QFW_ALLOCATION_ID; do
 		if [[ -n "${!name:-}" ]]; then
 			printf "%s\n" "${!name}"
 			return 0

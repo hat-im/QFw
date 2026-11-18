@@ -173,6 +173,35 @@ def qfw_run_base_dir():
     return Path(value).expanduser().resolve()
 
 
+def is_this_node(name):
+    return _short_hostname(name) == _short_hostname(socket.gethostname())
+
+
+def _short_hostname(name):
+    return str(name).split(".", 1)[0]
+
+
+def pbs_nodelist(environ=None):
+    environ = os.environ if environ is None else environ
+    nodefile = environ["PBS_NODEFILE"]
+    nodes = list(dict.fromkeys(
+        Path(nodefile).read_text(encoding="utf-8").split()))
+    here = [node for node in nodes if is_this_node(node)]
+    if not here:
+        raise ValueError(
+            f"this node, {socket.gethostname()}, is not in PBS_NODEFILE "
+            f"{nodefile}; run QFw from inside the PBS job")
+    return ",".join([*here, *(node for node in nodes if node not in here)])
+
+
+def batch_job(slurm_job_id, pbs_job_id):
+    if slurm_job_id:
+        return f"Slurm job {slurm_job_id}"
+    if pbs_job_id:
+        return f"PBS job {pbs_job_id}"
+    return ""
+
+
 def load_yaml(path):
     path = Path(path).expanduser()
     with path.open("r", encoding="utf-8") as stream:
@@ -750,6 +779,7 @@ def prepare_run_state(site_config_path, runtime_config_path, site_config,
         "log_dir": str(log_dir),
         "state_dir": str(state_dir),
         "slurm_job_id": os.environ.get("SLURM_JOB_ID", ""),
+        "pbs_job_id": os.environ.get("PBS_JOBID", ""),
         "site_config": str(site_config_path),
         "runtime_config": str(runtime_config_path),
         "profile": profile,
@@ -833,20 +863,22 @@ def current_run_dir():
 
 
 def _other_run_reason(run_dir):
-    """Why run_dir is not a run of this Slurm job, or "" when it is.
+    """Why run_dir is not a run of this batch job, or "" when it is.
 
-    A run prepared outside Slurm matches only a process outside Slurm.
+    A run prepared outside a batch job matches only a process outside one.
     """
     try:
         state = read_state(run_dir)
     except (OSError, ValueError):
         return "it holds no readable QFw runtime state"
-    recorded = str(state.get("slurm_job_id") or "")
-    current = os.environ.get("SLURM_JOB_ID", "")
+    recorded = batch_job(
+        state.get("slurm_job_id"), state.get("pbs_job_id"))
+    current = batch_job(
+        os.environ.get("SLURM_JOB_ID"), os.environ.get("PBS_JOBID"))
     if recorded == current:
         return ""
-    where = f"in Slurm job {recorded}" if recorded else "outside Slurm"
-    here = f"Slurm job {current}" if current else "a process outside Slurm"
+    where = f"in {recorded}" if recorded else "outside a batch job"
+    here = current or "a process outside a batch job"
     return f"it was prepared {where}, and this is {here}"
 
 

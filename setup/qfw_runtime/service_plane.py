@@ -358,12 +358,13 @@ def _resolve_plan(args, run_dir):
         (node if component_mode == "qpm" else None)
     )
     for selected_node in {directory_node, qpm_node} - {None}:
-        if allocation["mode"] == "local" and selected_node not in {
-                "127.0.0.1", "localhost", socket.gethostname()}:
+        if allocation["mode"] not in SLURM_MODES and not (
+                selected_node in {"127.0.0.1", "localhost"}
+                or qfw_config.is_this_node(selected_node)):
             raise ServicePlaneError(
                 f"cannot launch on {selected_node!r} outside a Slurm "
                 "allocation; run the manager on that node or invoke it "
-                "inside an allocation")
+                "inside a Slurm allocation")
 
     component_config = local or {}
     if args.scope == "application" and not local:
@@ -1501,6 +1502,8 @@ def _allocation_context():
             mode = "heterogeneous"
         elif os.environ.get("SLURM_JOB_NODELIST"):
             mode = "slurm"
+        elif os.environ.get("PBS_NODEFILE"):
+            mode = "pbs"
         else:
             mode = "local"
     if mode == "heterogeneous":
@@ -1510,6 +1513,10 @@ def _allocation_context():
             "SLURM_JOB_NODELIST_HET_GROUP_1", "")
     elif mode == "slurm":
         nodes = os.environ.get("SLURM_JOB_NODELIST", socket.gethostname())
+        group0_value = group0_value or nodes
+        group1_value = group1_value or nodes
+    elif mode == "pbs":
+        nodes = qfw_config.pbs_nodelist()
         group0_value = group0_value or nodes
         group1_value = group1_value or nodes
     else:

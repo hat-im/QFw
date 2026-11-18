@@ -61,7 +61,7 @@ def emit(kind, **payload):
 
 
 def allocation_id():
-	for name in ("SLURM_JOB_ID", "SLURM_JOBID", "QFW_ALLOCATION_ID"):
+	for name in ("SLURM_JOB_ID", "SLURM_JOBID", "PBS_JOBID", "QFW_ALLOCATION_ID"):
 		value = os.environ.get(name)
 		if value:
 			return value
