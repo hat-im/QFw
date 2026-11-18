@@ -1,4 +1,5 @@
 import logging
+from .settings import BACKEND_ACCELERATORS, EXECUTABLE
 from .svc_qrc import QRC
 from util.qpm.util_qpm import UTIL_QPM
 from util.qpm.util_circuit import set_max_qubits_pp
@@ -23,7 +24,9 @@ NWQSIM_INSTRUCTIONS = (
 
 class QPM(UTIL_QPM):
 	def __init__(self, start=True):
-		super().__init__(QRC(start=start), start=start)
+		qrc = QRC(start=start)
+		self.accelerator = BACKEND_ACCELERATORS[qrc.backend]
+		super().__init__(qrc, start=start)
 		set_max_qubits_pp(MAX_NWQSIM_QUBITS)
 		self.configure_device_profile(
 			max_qubits=MAX_NWQSIM_QUBITS,
@@ -46,7 +49,7 @@ class QPM(UTIL_QPM):
 		return info
 
 	def prepare_circuit(self, info):
-		info['qfw_backend'] = 'circuit_runner.nwqsim'
+		info['qfw_backend'] = EXECUTABLE
 		return info
 
 	def get_backend_info(self, lib=None, token=None, reservation_id=None):
