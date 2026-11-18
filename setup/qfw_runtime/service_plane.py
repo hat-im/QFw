@@ -708,6 +708,7 @@ def _start_prte(state, timeout, service_environment=None):
             ),
             timeout,
             f"PRTE DVM URI and PID under {uri_path.parent}",
+            holds_devices=True,
         )
         record["pid"] = _read_pid(pid_file)
         record["process_identity"] = _require_process_identity(
@@ -841,7 +842,7 @@ def _start_qpm(state, service, timeout, service_environment=None):
             record, service["target"], command, "--background", env,
             state["allocation"],
             lambda: _launched_service_ready(pid_file, ready_file), timeout,
-            f"QPM service {service_id}")
+            f"QPM service {service_id}", holds_devices=True)
         record["pid"] = _read_pid(pid_file)
         record["process_identity"] = _require_process_identity(
             record["pid"], record.get("node"), state["allocation"])
@@ -1329,7 +1330,7 @@ def _launched_service_ready(pid_file, ready_file):
 
 
 def _launch(record, node, command, detach_flag, env, allocation, ready,
-            timeout, description):
+            timeout, description, holds_devices=False):
     if allocation.get("mode") not in SLURM_MODES:
         _run_on_node(node, [*command, detach_flag], env, allocation)
         _wait_for(ready, timeout, description)
@@ -1340,7 +1341,7 @@ def _launch(record, node, command, detach_flag, env, allocation, ready,
     step = _start_step(
         _node_launch(
             node, ["env", *_STEP_VARIABLES_UNSET, *command], allocation,
-            step_options),
+            step_options, holds_devices),
         env, step_log)
     _STEPS[step.pid] = step
     record["step"] = {
@@ -1439,9 +1440,12 @@ def _run_on_node(node, command, env, allocation, check=True):
     return result
 
 
-def _node_launch(node, command, allocation, step_options=()):
+def _node_launch(node, command, allocation, step_options=(),
+                 holds_devices=False):
     launch = list(command)
     mode = allocation.get("mode")
+    if not holds_devices:
+        step_options = [*step_options, "--gres=none"]
     if mode == "heterogeneous":
         group = _group_for_node(node, allocation)
         launch = [
