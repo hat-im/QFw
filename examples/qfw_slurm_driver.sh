@@ -474,7 +474,7 @@ if [[ -n "${het_group}" ]]; then
 	qfw_srun_control+=(--het-group "${het_group}")
 fi
 
-qfw_srun_app=(${qfw_srun_base[@]+"${qfw_srun_base[@]}"})
+qfw_srun_app=(${qfw_srun_base[@]+"${qfw_srun_base[@]}"} --gres none)
 if [[ -n "${nodes}" ]]; then
 	qfw_srun_app+=(--nodes "${nodes}")
 fi

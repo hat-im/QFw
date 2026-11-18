@@ -696,7 +696,8 @@ Linux) but no `qiskit-aer-gpu` (CUDA 12) 0.17.2. Elsewhere, build Aer 0.17.2
 from source with `-DAER_THRUST_BACKEND=CUDA`.
 
 In a Slurm job, QFw starts its directory, probes and other control steps with
-`--gres=none`, and leaves the job's GPUs to the QPM and PRTE DVM steps. Before
+`--gres=none`, and leaves the job's GPUs to the QPM and PRTE DVM steps.
+`qfw_slurm_driver.sh` starts the application with `--gres none` too. Before
 Slurm 21.08, `--overlap` does not share GPUs between steps, so a GPU service
 needs its runner in the QPM's own step. Give its entry
 `provider-launch: {type: mpi, use-dvm: false}`, and the QPM runs `mpirun`
