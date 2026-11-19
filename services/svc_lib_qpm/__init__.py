@@ -17,7 +17,6 @@ svc_info = {
 	'instance_mode': 'singleton',
 	'properties': {
 		'provider': 'shim',
-		'num_qubits': 20,
 	}
 }
 

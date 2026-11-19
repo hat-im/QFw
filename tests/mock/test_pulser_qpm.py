@@ -15,13 +15,13 @@ if SERVICES not in sys.path:
 	sys.path.insert(0, SERVICES)
 
 
-def _lib_qpm(monkeypatch, provider):
+def _lib_qpm(monkeypatch, provider, num_qubits=61):
 	from svc_lib_qpm import descriptor as shim_descriptor
 	from svc_lib_qpm.svc_qpm import QPM
 	monkeypatch.delenv("QFW_QPU_DEVICE_ID", raising=False)
 	monkeypatch.setattr(
 		shim_descriptor, "resolve_descriptor", lambda device_id=None: {
-			"provider": provider, "num_qubits": 61})
+			"provider": provider, "num_qubits": num_qubits})
 	qpm = QPM.__new__(QPM)
 	qpm.controller_telemetry = lambda: {}
 	return qpm
@@ -35,6 +35,13 @@ def test_a_pasqal_qpm_declares_pulser_alone(monkeypatch):
 	assert properties["device_provider"] == "pasqal"
 	assert properties["technology"] == "neutral-atom"
 	assert properties["num_qubits"] == 61
+
+
+def test_a_device_without_num_qubits_publishes_no_width(monkeypatch):
+	info = _lib_qpm(monkeypatch, "ibm", num_qubits=None).query()
+
+	assert "num_qubits" not in info["properties"]
+	assert info["selector"]["resources"] == ["QPM"]
 
 
 @pytest.mark.parametrize("provider,capability", [
