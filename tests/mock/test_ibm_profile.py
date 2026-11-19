@@ -262,3 +262,37 @@ def test_native_submission_preserves_classical_counts(monkeypatch):
 	assert submitted == [(("program", "fmt-qasm3", 10), {})]
 	assert records == [(counts, 10, "ibm", "ibm-torino", {
 		"job_id": "ibm-job", "status": "completed", "queue_position": None})]
+
+
+def test_backend_info_publishes_ibms_configuration_for_the_reservation(monkeypatch):
+	configuration = {
+		"backend_name": "reserved-backend", "n_qubits": 3,
+		"basis_gates": ["cz", "rz", "sx", "x"], "coupling_map": [[0, 1], [1, 2]],
+		"max_shots": 100000}
+	properties = {"qubits": [], "gates": []}
+	fetched = []
+
+	def backend_records(access):
+		fetched.append(access)
+		return configuration, properties
+	monkeypatch.setitem(sys.modules, "svc_lib_qpm.drivers.ibm_runtime",
+		types.SimpleNamespace(backend_records=backend_records))
+	normalized = []
+
+	def normalize_device(data, device_id=None):
+		normalized.append((data, device_id))
+		return {"qubits": [0, 1, 2]}
+	monkeypatch.setitem(sys.modules, "qhw_ibm",
+		types.SimpleNamespace(normalize_device=normalize_device))
+	driver = QdmiDriver(_descriptor())
+	stub_qdmi_session(driver)
+
+	info = driver.get_backend_info(_credential())
+
+	assert info == {
+		"backend": "ibm", "metadata_supported": True,
+		"static_architecture": configuration, "backend_properties": properties,
+		"active_qubits": [0, 1, 2], "calibration_set_id": None,
+		"qhw_device": {"qubits": [0, 1, 2]}}
+	assert fetched == [driver._access(_credential())]
+	assert normalized == [(configuration, "ibm-torino")]

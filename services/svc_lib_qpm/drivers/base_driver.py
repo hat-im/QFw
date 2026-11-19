@@ -68,6 +68,25 @@ def pasqal_backend_info(device_type, entries):
 	}
 
 
+def ibm_backend_info(configuration, properties, device_id):
+	# get_backend_info for an IBM device: IBM's BackendConfiguration under
+	# static_architecture and its BackendProperties beside it, the pair
+	# qfw_target converts to the ISA target.
+	from qhw_ibm import normalize_device
+	qhw_device = normalize_device(configuration, device_id=device_id)
+	n_qubits = configuration.get(
+		"n_qubits", len(qhw_device.get("qubits", [])))
+	return {
+		"backend": "ibm",
+		"metadata_supported": True,
+		"static_architecture": configuration,
+		"backend_properties": properties or None,
+		"active_qubits": list(range(n_qubits)),
+		"calibration_set_id": None,
+		"qhw_device": qhw_device,
+	}
+
+
 class JobRecords:
 	# The jobs a driver ran, by cid, for get_task_timing and
 	# get_task_metadata. A lookup names its cid, so one user's call never

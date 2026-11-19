@@ -118,15 +118,17 @@ class QdmiDriver(BaseDriver):
 		# (and the native svc_iqm_qpm): the provider, that metadata is
 		# served, the active qubits and the embedded qhw device record, so a
 		# client leading with this call gets a device from a QDMI-only
-		# resource too. QDMI has no raw provider architecture to put under
-		# static_architecture, so that key is empty, as it is for a QRMI too
-		# old to report one. The calibration set id is the provider's, read
-		# from its custom slot the way the calibration snapshot reads it. A
-		# reservation-bound read opens the device with that reservation's
-		# credential, as its circuits do.
+		# resource too. A profile whose provider publishes its own record
+		# (IBM's backend configuration) returns it; otherwise QDMI has no raw
+		# provider architecture to put under static_architecture, so that key
+		# is empty, as it is for a QRMI too old to report one. The
+		# calibration set id is the provider's, read from its custom slot the
+		# way the calibration snapshot reads it. A reservation-bound read
+		# opens the device with that reservation's credential, as its
+		# circuits do.
 		provider, device_id = self._ids()
 		device = self._device(credential)
-		info = self._profile.backend_info(device)
+		info = self._profile.backend_info(device, credential)
 		if info is not None:
 			return info
 		topo = qdmi_normalize.extract_topology(device)

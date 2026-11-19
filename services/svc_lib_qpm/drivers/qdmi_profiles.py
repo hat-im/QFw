@@ -76,7 +76,7 @@ class QdmiProfile(ProviderProfile):
 		# What to log once the session is open.
 		return access.get("qc_alias") or access.get("base_url")
 
-	def backend_info(self, device):
+	def backend_info(self, device, credential=None):
 		return None
 
 	def circuit_source(self, info):
@@ -353,6 +353,13 @@ class IbmQdmiProfile(QdmiProfile):
 	def describe(self, access):
 		return access.get("backend_name")
 
+	def backend_info(self, device, credential=None):
+		from .base_driver import ibm_backend_info
+		from .ibm_runtime import backend_records
+		configuration, properties = backend_records(self.access(credential))
+		return ibm_backend_info(
+			configuration, properties, self._descriptor.get("id"))
+
 	def encode(self, driver, source, info, backend):
 		from mqt.core.mlir import TargetEnvironment, serialize_program
 		from mqt.core.plugins.qiskit.exceptions import UnsupportedOperationError
@@ -432,7 +439,7 @@ class PasqalQdmiProfile(QdmiProfile):
 	def describe(self, access):
 		return access["custom1"]
 
-	def backend_info(self, device):
+	def backend_info(self, device, credential=None):
 		import json
 		from mqt.core.qdmi import CustomProperty
 		from .base_driver import pasqal_backend_info

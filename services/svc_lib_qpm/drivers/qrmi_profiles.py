@@ -1,4 +1,4 @@
-from .base_driver import pasqal_backend_info
+from .base_driver import ibm_backend_info, pasqal_backend_info
 from .login import resolve_login
 from .provider_profile import ProviderProfile
 from defw_exception import DEFwExecutionError
@@ -425,27 +425,12 @@ class IbmQrmiProfile(QrmiProfile):
 		}
 
 	def backend_info(self, driver, credential=None):
-		from qhw_ibm import normalize_device
 		target = driver._target(credential=credential)
 		configuration = target.get("configuration") or {}
 		if not configuration:
 			raise DEFwExecutionError("QRMI failed to retrieve the backend data")
-		qhw_device = normalize_device(
-			configuration, device_id=driver._device_id())
-		qubits_len = len(qhw_device.get("qubits", []))
-		n_qubits = configuration.get("n_qubits", qubits_len)
-		# The raw configuration and properties together are what
-		# _build_backend_target converts to the ISA target, so a client
-		# that builds its own target gets both here.
-		return {
-			"backend": "ibm",
-			"metadata_supported": True,
-			"static_architecture": configuration,
-			"backend_properties": target.get("properties") or None,
-			"active_qubits": list(range(n_qubits)),
-			"calibration_set_id": None,
-			"qhw_device": qhw_device,
-		}
+		return ibm_backend_info(
+			configuration, target.get("properties"), driver._device_id())
 
 	def run_circuit(self, driver, source):
 		return self._run_ibm_circuit(driver, source)
