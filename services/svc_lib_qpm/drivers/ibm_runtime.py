@@ -3,7 +3,7 @@
 
 from defw_exception import DEFwExecutionError
 from ibm_cloud_sdk_core import IAMTokenManager
-from qiskit_ibm_runtime.api.client import RuntimeClient
+from qiskit_ibm_runtime.api.clients import RuntimeClient
 from qiskit_ibm_runtime.api.client_parameters import ClientParameters
 
 

@@ -6,7 +6,9 @@ qiskit-optimization
 supermarq
 pennylane
 pennylane-qiskit==0.45.1
-qiskit-ibm-runtime
+# svc_lib_qpm/drivers/ibm_runtime.py imports RuntimeClient from
+# qiskit_ibm_runtime.api.clients, which 0.51 moved to api.client.
+qiskit-ibm-runtime>=0.45.1,<0.51
 # qiskit-ibm-runtime asks for ibm-platform-services>=0.22.6, and iqm-client
 # below pins requests==2.32.3 exactly. ibm-platform-services 0.77.0 moved to
 # ibm-cloud-sdk-core>=3.24.4, which needs requests>=2.32.4, so the two cannot
