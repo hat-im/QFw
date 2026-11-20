@@ -25,8 +25,10 @@ NWQSIM_INSTRUCTIONS = (
 
 class QPM(UTIL_QPM):
 	def __init__(self, start=True):
-		super().__init__(
-			QRC(nwqsim_backend(this_service_entry()), start=start), start=start)
+		from . import accelerator
+		entry = this_service_entry()
+		self.accelerator = accelerator(entry)
+		super().__init__(QRC(nwqsim_backend(entry), start=start), start=start)
 		set_max_qubits_pp(MAX_NWQSIM_QUBITS)
 		self.configure_device_profile(
 			max_qubits=MAX_NWQSIM_QUBITS,

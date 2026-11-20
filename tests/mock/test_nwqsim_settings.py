@@ -78,3 +78,12 @@ def test_the_runner_runs_the_entrys_backend_whatever_the_circuit_asks(command):
 
 def test_the_runner_defaults_to_openmp(command):
 	assert "-backend OPENMP" in command({})
+
+
+@pytest.mark.parametrize("backend, accelerator", [
+	("OPENMP", "cpu"), ("NVGPU", "gpu")])
+def test_the_service_summary_names_the_device_its_backend_runs_on(
+		service, backend, accelerator):
+	summary = service(backend=backend).get_service_summary()
+
+	assert summary["accelerator"] == accelerator
