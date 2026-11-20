@@ -609,6 +609,31 @@ def test_reserve_rejects_ineligible_user_before_admission(
 	assert qpm.controller.admission_context.requests == []
 
 
+@pytest.mark.parametrize("task_class, message", [
+	({"shots": 1_155_540, "qubit_count": 10},
+	 "shots 1155540 exceeds the QPM's max_shots 1000000"),
+	({"shots": 1_000, "qubit_count": 12},
+	 "qubit_count 12 exceeds the QPM's max_qubits 10"),
+])
+def test_reserve_names_the_device_limit_a_request_exceeds(
+		monkeypatch, task_class, message):
+	_setup(monkeypatch)
+	qpm = AdmissionQPM()
+	qpm.configure_device_profile(max_qubits=10, max_shots=1_000_000)
+
+	decision = qpm.reserve(request={
+		"job_id": "job-large",
+		"scope_id": "scope-a",
+		"target_device_id": "device-a",
+		"task_class": task_class,
+	})
+
+	assert decision["status"] == "rejected"
+	assert decision["reason"] == "request-too-large"
+	assert decision["message"] == message
+	assert qpm.controller.admission_context.requests == []
+
+
 def test_qpm_restart_invalidates_old_reservation_and_advances_identifier(
 		monkeypatch, tmp_path):
 	_setup(monkeypatch)
