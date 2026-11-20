@@ -397,6 +397,7 @@ def test_service_summary_reports_sanitized_runtime_state(monkeypatch):
 		"accepting_requests": True,
 		"provider_ready": True,
 		"dvm_ready": None,
+		"accelerator": None,
 		"maintenance": False,
 		"active_reservation_count": 0,
 		"active_task_count": 0,
