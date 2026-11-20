@@ -117,8 +117,7 @@ def test_the_entrys_names_become_aers_options():
 
 @pytest.mark.parametrize("device, accelerator", [("GPU", "gpu"), ("CPU", "cpu")])
 def test_the_service_summary_names_the_device_it_runs_on(
-		service, monkeypatch, device, accelerator):
-	monkeypatch.setattr(svc_qpm, "available_devices", lambda: ("CPU", "GPU"))
+		service, device, accelerator):
 	service(mode="ideal", device=device, **{"num-qubits": 20})
 
 	assert QPM(start=False).get_service_summary()["accelerator"] == accelerator
