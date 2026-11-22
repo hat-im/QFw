@@ -26,3 +26,15 @@ paths then apply their own previously validated patch sets. TNQVM installs
 into the XACC prefix because its accelerator and visitor libraries are XACC
 plugins. The top-level `bin/circuit_runner.tnqvm` link resolves to the runner
 under that XACC prefix so plugin discovery uses the same installation root.
+
+The Open MPI that runs the simulator QPMs' DVM and their `mpirun` clients has
+its own builder. It builds the Open MPI 5.0.9 release with the PRRTE sources
+that the pinned PRRTE revision changes, and passes the arguments after `--` to
+Open MPI's configure:
+
+```bash
+tools/dependencies/openmpi/build.sh \
+  --work-dir /tmp/qfw-dependencies/openmpi \
+  --prefix /opt/openmpi \
+  -- --with-libfabric=/opt/libfabric --with-slurm
+```
